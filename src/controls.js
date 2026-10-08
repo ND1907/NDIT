@@ -6,7 +6,8 @@ export class Controls {
     this.look = { x: 0, y: 0 }; // opgespaarde kijk-delta in pixels
     this.firing = false;
     this.jumpPressed = false;
-    this.reloadPressed = false;
+    this.switchPressed = false;
+    this.mountPressed = false;
     this.sprint = false;
     this.enabled = false;
     this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -110,7 +111,8 @@ export class Controls {
       });
     };
     tap('btn-jump', () => (this.jumpPressed = true));
-    tap('btn-reload', () => (this.reloadPressed = true));
+    tap('btn-switch', () => (this.switchPressed = true));
+    tap('btn-mount', () => (this.mountPressed = true));
   }
 
   // Muis vastzetten voor richten; als de browser dat weigert, valt de besturing terug op slepen.
@@ -133,7 +135,10 @@ export class Controls {
       this.keys.add(e.code);
       if (!this.enabled) return;
       if (e.code === 'Space') this.jumpPressed = true;
-      if (e.code === 'KeyR') this.reloadPressed = true;
+      if (e.code === 'KeyQ') this.switchPressed = true;
+      if (e.code === 'Digit1') this.selectWeapon = 'sword';
+      if (e.code === 'Digit2') this.selectWeapon = 'bow';
+      if (e.code === 'KeyE' || e.code === 'KeyF') this.mountPressed = true;
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
@@ -152,6 +157,9 @@ export class Controls {
       if (e.button === 0) this.firing = true;
     });
     canvasHost.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvasHost.addEventListener('wheel', (e) => {
+      if (this.enabled && Math.abs(e.deltaY) > 20) this.switchPressed = true;
+    }, { passive: true });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0 && !this.isTouch) this.firing = false;
     });
@@ -192,7 +200,7 @@ export class Controls {
     this.move.x = this.move.y = 0;
     this.look.x = this.look.y = 0;
     this.firing = false;
-    this.jumpPressed = this.reloadPressed = false;
+    this.jumpPressed = this.switchPressed = this.mountPressed = false;
     this.joyId = null;
     this.lookIds.clear();
     this.joyBase.classList.remove('active');

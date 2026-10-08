@@ -29,18 +29,20 @@
       <div id="hitmarker">✕</div>
       <div id="dmg-dir"><div></div></div>
       <div id="announce"></div>
+      <div id="prompt"></div>
 
       <div id="status">
         <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100</span></div>
-        <div id="ammo-box"><span id="weapon-name"></span><span id="ammo">8/8</span><span id="reload" class="hidden">HERLADEN…</span></div>
+        <div id="ammo-box"><span id="weapon-name"></span><span id="ammo"></span></div>
       </div>
 
       <div id="touch-zone"></div>
       <div id="joy-base"><div id="joy-knob"></div></div>
       <div id="buttons" class="touch-only">
-        <button id="btn-fire" aria-label="Vuur"><span>VUUR</span></button>
+        <button id="btn-fire" aria-label="Aanvallen"><span>AANVAL</span></button>
         <button id="btn-jump" aria-label="Spring">▲</button>
-        <button id="btn-reload" aria-label="Herlaad">⟳</button>
+        <button id="btn-switch" aria-label="Wissel wapen">⇄</button>
+        <button id="btn-mount" class="hidden" aria-label="Paard">🐎</button>
       </div>
     </div>
     <div id="vignette"></div>
@@ -56,18 +58,18 @@
     <div id="menu" class="screen">
       <div class="menu-inner">
         <h1>FETIH <span>1453</span></h1>
-        <p class="sub">De belegering van Constantinopel · 3D teamshooter</p>
+        <p class="sub">De belegering van Constantinopel · boog, zwaard en paard</p>
         <div class="teams">
           <button class="team-card o selected" data-team="ottoman">
             <div class="emblem">☪</div>
             <div class="tc-name">Ottomaanse Rijk</div>
-            <div class="tc-desc">Janitsaren · lontroer<br />snel vuur, 8 schoten</div>
+            <div class="tc-desc">Janitsaren &amp; sipahi-ruiters<br />Turkse boog · kılıç-sabel</div>
           </button>
           <div class="vs">VS</div>
           <button class="team-card b" data-team="byzantine">
             <div class="emblem">☩</div>
             <div class="tc-name">Byzantijnse Rijk</div>
-            <div class="tc-desc">Stadswacht · kruisboog<br />zware schade, 6 schoten</div>
+            <div class="tc-desc">Stadswacht &amp; kataphrakten<br />boog · spathion met schild</div>
           </button>
         </div>
         <div class="diff">
@@ -76,8 +78,8 @@
           <button data-diff="hard">Moeilijk</button>
         </div>
         <button id="btn-play" class="big">TEN STRIJDE!</button>
-        <p class="help touch-only">Links slepen = lopen (ver duwen = sprinten) · Rechts slepen = richten · VUUR ingedrukt houden</p>
-        <p class="help desktop-only">WASD lopen · Shift sprint · Muis richten · Klik schieten · R herladen · Spatie springen · Esc pauze<br />Muis niet vastgezet? Houd de rechtermuisknop ingedrukt en sleep om te richten.</p>
+        <p class="help touch-only">Links slepen = lopen · Rechts slepen = richten · AANVAL ingedrukt houden · ⇄ boog/zwaard · 🐎 paard</p>
+        <p class="help desktop-only">WASD lopen · Shift sprint · Muis richten · Klik aanvallen · Q of 1/2 boog/zwaard · E paard op/af · Spatie springen · Esc pauze<br />Muis niet vastgezet? Houd de rechtermuisknop ingedrukt en sleep om te richten.</p>
       </div>
     </div>
 

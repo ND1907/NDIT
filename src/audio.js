@@ -56,19 +56,69 @@ function tone(t, type, f0, f1, dur, vol) {
   o.stop(t + dur + 0.05);
 }
 
-// vol: 0..1 (afhankelijk van afstand)
-export function playShot(weapon, vol = 1) {
+// Pees die loslaat + suizende pijl. vol: 0..1 (afhankelijk van afstand)
+export function playBow(vol = 1) {
   if (!ctx || muted || vol <= 0.02) return;
   const t = ctx.currentTime;
-  if (weapon === 'musket') {
-    noiseBurst(t, 0.45, 1800, 0.7, 0.9 * vol);
-    noiseBurst(t, 0.9, 380, 0.5, 0.7 * vol);
-    tone(t, 'sine', 120, 35, 0.35, 0.8 * vol);
-  } else {
-    tone(t, 'triangle', 420, 90, 0.18, 0.5 * vol);
-    noiseBurst(t, 0.08, 3500, 2, 0.5 * vol, 'bandpass');
-    tone(t + 0.01, 'square', 160, 60, 0.08, 0.15 * vol);
-  }
+  tone(t, 'triangle', 180, 70, 0.16, 0.45 * vol);
+  noiseBurst(t, 0.06, 2500, 2, 0.35 * vol, 'bandpass');
+  noiseBurst(t + 0.03, 0.25, 5000, 1.5, 0.12 * vol, 'highpass');
+}
+
+// Zwaai van een zwaard (whoosh)
+export function playSwing(vol = 1) {
+  if (!ctx || muted || vol <= 0.02) return;
+  const t = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = noise;
+  const f = ctx.createBiquadFilter();
+  f.type = 'bandpass';
+  f.Q.value = 3;
+  f.frequency.setValueAtTime(600, t);
+  f.frequency.exponentialRampToValueAtTime(2600, t + 0.18);
+  const g = ctx.createGain();
+  env(g, t, 0.05, 0.4 * vol, 0.16);
+  src.connect(f).connect(g).connect(master);
+  src.start(t, Math.random() * 0.5);
+  src.stop(t + 0.3);
+}
+
+// Staal op staal/schild
+export function playClash(vol = 1) {
+  if (!ctx || muted || vol <= 0.02) return;
+  const t = ctx.currentTime;
+  for (const f of [1250, 1870, 2930, 4100]) tone(t, 'sine', f, f * 0.98, 0.5, 0.09 * vol);
+  noiseBurst(t, 0.05, 6000, 1, 0.3 * vol, 'highpass');
+}
+
+// Treffer in het lichaam
+export function playFlesh(vol = 1) {
+  if (!ctx || muted || vol <= 0.02) return;
+  const t = ctx.currentTime;
+  noiseBurst(t, 0.12, 500, 1, 0.5 * vol);
+  tone(t, 'sine', 140, 60, 0.12, 0.35 * vol);
+}
+
+// Pijl slaat in hout/steen
+export function playThunk(vol = 1) {
+  if (!ctx || muted || vol <= 0.05) return;
+  const t = ctx.currentTime;
+  tone(t, 'square', 320, 120, 0.05, 0.12 * vol);
+  noiseBurst(t, 0.08, 1200, 1, 0.25 * vol);
+}
+
+export function playHoof(vol = 1) {
+  if (!ctx || muted) return;
+  const t = ctx.currentTime;
+  tone(t, 'sine', 95, 50, 0.08, 0.35 * vol);
+  noiseBurst(t, 0.05, 700, 1, 0.15 * vol);
+}
+
+export function playSwitch() {
+  if (!ctx || muted) return;
+  const t = ctx.currentTime;
+  noiseBurst(t, 0.12, 3500, 2, 0.25, 'bandpass');
+  tone(t + 0.05, 'sine', 2200, 2100, 0.15, 0.04);
 }
 
 export function playHit() {
@@ -89,19 +139,6 @@ export function playHurt() {
   const t = ctx.currentTime;
   noiseBurst(t, 0.15, 600, 1, 0.5);
   tone(t, 'sawtooth', 180, 90, 0.18, 0.15);
-}
-
-export function playReload() {
-  if (!ctx || muted) return;
-  const t = ctx.currentTime;
-  noiseBurst(t, 0.05, 4000, 3, 0.4, 'bandpass');
-  noiseBurst(t + 0.35, 0.05, 3000, 3, 0.4, 'bandpass');
-  noiseBurst(t + 0.7, 0.07, 2000, 3, 0.5, 'bandpass');
-}
-
-export function playImpact(vol = 1) {
-  if (!ctx || muted || vol <= 0.05) return;
-  noiseBurst(ctx.currentTime, 0.12, 900, 1, 0.35 * vol);
 }
 
 export function playHorn() {

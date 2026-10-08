@@ -92,8 +92,10 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: none; }
 #ammo-box { background: var(--panel); padding: 3px 10px; border-radius: 5px; display: flex; gap: 8px; align-items: baseline; }
 #weapon-name { font-size: 11px; opacity: .8; }
 #ammo { font-size: 20px; font-weight: 900; }
-#reload { color: var(--gold); font-size: 12px; font-weight: 800; animation: blink .5s infinite alternate; }
-@keyframes blink { to { opacity: .3; } }
+#weapon-name { font-size: 13px; opacity: 1; font-weight: 700; }
+#ammo { font-size: 16px; }
+#prompt { position: absolute; top: 62%; left: 50%; transform: translateX(-50%); font-weight: 800; font-size: 15px; color: var(--ink); text-shadow: 0 1px 3px #000; white-space: nowrap; }
+body[data-weapon='sword'] #crosshair { opacity: .45; }
 
 /* touch-besturing */
 #joy-base {
@@ -108,7 +110,9 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: none; }
 body[data-team='byzantine'] #btn-fire { background: rgba(107, 31, 143, .65) !important; }
 #btn-fire.pressed { transform: scale(.92); border-color: var(--gold); }
 #btn-jump { right: 112px; bottom: 0; width: 60px; height: 60px; font-size: 20px; }
-#btn-reload { right: 104px; bottom: 96px; width: 56px; height: 56px; font-size: 24px; }
+#btn-switch { right: 104px; bottom: 96px; width: 56px; height: 56px; font-size: 24px; }
+#btn-mount { right: 22px; bottom: 140px; width: 56px; height: 56px; font-size: 26px; background: rgba(120, 80, 30, .55) !important; }
+#btn-fire span { font-size: 13px; }
 
 .touch-only { display: none; }
 @media (pointer: coarse) {

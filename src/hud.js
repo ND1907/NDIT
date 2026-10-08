@@ -1,5 +1,5 @@
 import { TEAMS } from './teams.js';
-import { MAP_HALF } from './world.js';
+import { MAP_X, MAP_Z, FORT } from './world.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -11,7 +11,8 @@ export class Hud {
       hpText: $('hp-text'),
       ammo: $('ammo'),
       weapon: $('weapon-name'),
-      reload: $('reload'),
+      prompt: $('prompt'),
+      btnMount: $('btn-mount'),
       scoreO: $('score-o'),
       scoreB: $('score-b'),
       feed: $('killfeed'),
@@ -45,7 +46,6 @@ export class Hud {
     this.el.dmgDir.style.opacity = 0;
     const p = game.player;
     if (p) {
-      this.el.weapon.textContent = p.cfg.weaponName;
       document.body.dataset.team = p.team;
       this.announce(p.team === 'ottoman' ? 'Ileri! Verover Constantinopel!' : 'Verdedig de stad!');
     }
@@ -80,8 +80,21 @@ export class Hud {
       this.el.hp.style.background = v > 60 ? '#5fbf4a' : v > 30 ? '#e0a43a' : '#d8392f';
       this.el.hpText.textContent = v;
     });
-    this.set('ammo', p.ammo + '/' + p.cfg.magazine, (v) => (this.el.ammo.textContent = v));
-    this.set('rl', p.reloadT > 0, (v) => this.el.reload.classList.toggle('hidden', !v));
+    const bow = p.weapon === 'bow';
+    this.set('wpn', p.weapon, () => {
+      this.el.weapon.textContent = bow ? '🏹 ' + p.cfg.bow.name : '⚔ ' + p.cfg.sword.name;
+      document.body.dataset.weapon = p.weapon;
+    });
+    this.set('ammo', bow ? Math.floor(p.arrows) + ' pijlen' : '', (v) => (this.el.ammo.textContent = v));
+
+    // hint om op een paard te stappen
+    const horse = p.alive && !p.mounted ? game.nearestFreeHorse(p) : null;
+    const canMount = !!horse || p.mounted;
+    this.set('mnt', canMount + '|' + !!p.mounted, () => {
+      this.el.btnMount.classList.toggle('hidden', !canMount);
+      this.el.btnMount.textContent = p.mounted ? '⤓' : '🐎';
+      this.el.prompt.textContent = p.mounted ? '' : horse ? (game.controls.isTouch ? 'Tik 🐎 om op te stijgen' : 'Druk E om op te stijgen') : '';
+    });
     this.set('kd', p.kills + '/' + p.deaths, () => (this.el.kills.textContent = `⚔ ${p.kills}   ☠ ${p.deaths}`));
 
     this.hurtT = Math.max(0, this.hurtT - dt);
@@ -126,7 +139,7 @@ export class Hud {
     v.style.color = TEAMS[victim.team].uiColor;
     v.textContent = victim.name;
     const icon = document.createElement('i');
-    icon.textContent = killer.cfg.weapon === 'musket' ? ' ═╾ ' : ' ➶ ';
+    icon.textContent = killer.weapon === 'bow' ? ' ➶ ' : killer.mounted ? ' 🐎 ' : ' ⚔ ';
     row.append(k, icon, v);
     if (head) row.append(' 🎯');
     this.el.feed.prepend(row);
@@ -174,8 +187,19 @@ export class Hud {
     const c = document.createElement('canvas');
     c.width = c.height = size;
     const g = c.getContext('2d');
-    g.fillStyle = 'rgba(40,46,24,0.85)';
+    g.fillStyle = 'rgba(12,10,6,0.6)';
     g.fillRect(0, 0, size, size);
+    const [ax, ay] = this.toMap(MAP_X, MAP_Z, size);
+    const [bx, by] = this.toMap(-MAP_X, -MAP_Z, size);
+    g.fillStyle = 'rgba(52,62,30,0.92)';
+    g.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+    // forten in teamkleur
+    for (const [team, sgn] of [['ottoman', -1], ['byzantine', 1]]) {
+      const [x1, y1] = this.toMap(FORT.halfW, sgn * FORT.front, size);
+      const [x2, y2] = this.toMap(-FORT.halfW, sgn * FORT.back, size);
+      g.fillStyle = team === 'ottoman' ? 'rgba(208,32,46,0.35)' : 'rgba(138,63,184,0.4)';
+      g.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+    }
     g.fillStyle = 'rgba(210,195,160,0.85)';
     for (const o of game.obstacles) {
       const [x1, y1] = this.toMap(o.min.x, o.min.z, size);
@@ -187,7 +211,7 @@ export class Hud {
 
   // noorden (boven) = Byzantijnse kant (+z); x gespiegeld zodat links/rechts klopt vanaf Ottomaanse kant
   toMap(x, z, size) {
-    const s = (size / (MAP_HALF * 2 + 4)) * (this.flip ? -1 : 1);
+    const s = (size / (MAP_Z * 2 + 4)) * (this.flip ? -1 : 1);
     return [size / 2 - x * s, size / 2 - z * s];
   }
 
@@ -204,7 +228,7 @@ export class Hud {
       if (!s.alive) continue;
       const friendly = s.team === myTeam;
       // vijanden alleen zichtbaar als ze net geschoten hebben
-      if (!friendly && game.time - s.lastFireT > 2.5 && p) continue;
+      if (!friendly && game.time - s.lastAttackT > 2.5 && p) continue;
       const [x, y] = this.toMap(s.pos.x, s.pos.z, size);
       if (s.isPlayer) {
         g.save();
@@ -221,7 +245,7 @@ export class Hud {
       } else {
         g.fillStyle = friendly ? '#5fd0ff' : '#ff4d4d';
         g.beginPath();
-        g.arc(x, y, 3, 0, Math.PI * 2);
+        g.arc(x, y, s.mounted ? 4 : 3, 0, Math.PI * 2);
         g.fill();
       }
     }

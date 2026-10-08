@@ -1,16 +1,21 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Soldier } from './soldier.js';
-import { buildWorld, rayAABB, MAP_HALF, WALL_Z, GAPS } from './world.js';
-import { TEAMS, DIFFICULTY, enemyOf } from './teams.js';
+import { Horse } from './horse.js';
+import { buildWorld, rayAABB, regionOf, fortGates, MAP_X, MAP_Z } from './world.js';
+import { TEAMS, DIFFICULTY, ROLES, ARROWS_MAX, enemyOf } from './teams.js';
 import * as sfx from './audio.js';
 
-const TEAM_SIZE = 6;
+const TEAM_SIZE = ROLES.length;
 const SCORE_LIMIT = 30;
-const RESPAWN_TIME = 3;
-const CAM_DIST = 3.4;
+const RESPAWN_TIME = 3.5;
+const GRAVITY = 9.8;
+const RIDER_Y = 0.85; // hoogte van de ruiter boven de grond van het paard
+const HORSE_SPEED = 11;
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 
 const angleDiff = (a, b) => {
   let d = b - a;
@@ -20,6 +25,18 @@ const angleDiff = (a, b) => {
 };
 const dirFromAngles = (yaw, pitch, out = new THREE.Vector3()) =>
   out.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+
+// Richting om met snelheid v een punt te raken, rekening houdend met de zwaartekracht (lage boog).
+function ballisticDir(o, t, v, out = new THREE.Vector3()) {
+  const dx = t.x - o.x;
+  const dz = t.z - o.z;
+  const d = Math.hypot(dx, dz) || 0.001;
+  const h = t.y - o.y;
+  const v2 = v * v;
+  const disc = v2 * v2 - GRAVITY * (GRAVITY * d * d + 2 * h * v2);
+  const ang = disc < 0 ? Math.PI / 4 : Math.atan((v2 - Math.sqrt(disc)) / (GRAVITY * d));
+  return out.set((dx / d) * Math.cos(ang), Math.sin(ang), (dz / d) * Math.cos(ang));
+}
 
 export class Game {
   constructor(host, hud, controls, { lowQuality = false } = {}) {
@@ -36,12 +53,14 @@ export class Game {
     host.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 400);
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 450);
     this.world = buildWorld(this.scene, { shadows: !lowQuality });
     this.obstacles = this.world.obstacles;
 
     this.soldiers = [];
-    this.projectiles = [];
+    this.horses = [];
+    this.arrows = [];
+    this.stuck = [];
     this.particles = [];
     this.state = 'idle'; // idle | attract | playing | paused | over
     this.time = 0;
@@ -61,24 +80,39 @@ export class Game {
   // ------------------------------------------------------------------ setup
   start({ team = 'ottoman', difficulty = 'normal', withPlayer = true } = {}) {
     for (const s of this.soldiers) this.scene.remove(s.root);
-    for (const p of this.projectiles) this.scene.remove(p.mesh);
-    for (const p of this.particles) this.scene.remove(p.mesh);
+    for (const h of this.horses) this.scene.remove(h.root);
+    for (const a of [...this.arrows, ...this.stuck, ...this.particles]) this.scene.remove(a.mesh);
     this.soldiers = [];
-    this.projectiles = [];
+    this.horses = [];
+    this.arrows = [];
+    this.stuck = [];
     this.particles = [];
     this.score = { ottoman: 0, byzantine: 0 };
     this.diff = DIFFICULTY[difficulty];
-    this.playerTeam = team;
     this.player = null;
     this.time = 0;
     this.pendingRestart = false;
 
     for (const t of ['ottoman', 'byzantine']) {
+      // paarden in de stal: eerst voor de ruiters, de rest is vrij te gebruiken
+      const spots = this.world.horseSpots[t];
+      const teamHorses = spots.map((spot, i) => {
+        const h = new Horse(t, i + (t === 'byzantine' ? 2 : 0));
+        h.home.copy(spot.pos);
+        h.homeYaw = spot.yaw;
+        h.sendHome();
+        this.scene.add(h.root);
+        this.horses.push(h);
+        return h;
+      });
+      let horseIdx = 0;
       const names = [...TEAMS[t].names].sort(() => Math.random() - 0.5);
       for (let i = 0; i < TEAM_SIZE; i++) {
         const isPlayer = withPlayer && t === team && i === 0;
-        const s = new Soldier({ team: t, name: isPlayer ? 'Jij' : names[i], isPlayer });
-        s.ai = { thinkT: Math.random() * 0.3, target: null, reactT: 0, strafe: 1, strafeT: 0, path: [], stuckT: 0, lastPos: new THREE.Vector3() };
+        const role = ROLES[i];
+        const s = new Soldier({ team: t, name: isPlayer ? 'Jij' : names[i], isPlayer, role: isPlayer ? 'player' : role });
+        s.ai = { thinkT: Math.random() * 0.3, target: null, reactT: 0, strafe: 1, strafeT: 0, path: [], chase: [], stuckT: 0, lastPos: new THREE.Vector3(), passT: 0 };
+        if (role === 'cavalry' && !isPlayer) s.ownHorse = teamHorses[horseIdx++];
         this.scene.add(s.root);
         this.soldiers.push(s);
         this.spawn(s, i);
@@ -94,18 +128,61 @@ export class Game {
   }
 
   spawn(s, idx = Math.floor(Math.random() * 10)) {
+    if (s.mounted) this.dismount(s, true);
     const pts = this.world.spawns[s.team];
     const p = pts[idx % pts.length];
     s.reset();
     s.pos.set(p.x + (Math.random() - 0.5) * 2, 0, p.z + (Math.random() - 0.5) * 2);
     s.yaw = s.team === 'ottoman' ? 0 : Math.PI;
     s.pitch = 0;
-    s.spawnShield = 1.5;
+    s.spawnShield = 2;
     if (s.ai) {
       s.ai.path = [];
+      s.ai.chase = [];
       s.ai.target = null;
       s.ai.lastPos.copy(s.pos);
     }
+    // ruiters stappen meteen weer op hun eigen paard
+    const h = s.ownHorse;
+    if (h && !h.rider) {
+      h.sendHome();
+      this.mount(s, h);
+    }
+  }
+
+  mount(s, h) {
+    s.mounted = h;
+    h.rider = s;
+    s.vel.set(0, 0, 0);
+    s.yaw = h.yaw;
+    s.pos.set(h.pos.x, h.pos.y + RIDER_Y, h.pos.z);
+    if (s.isPlayer) this.hud.announce('Te paard!');
+  }
+
+  dismount(s, silent = false) {
+    const h = s.mounted;
+    if (!h) return;
+    h.rider = null;
+    h.speed = Math.min(h.speed, 3);
+    s.mounted = null;
+    // naast het paard neerzetten (rechterkant)
+    s.pos.set(h.pos.x - Math.cos(h.yaw) * 1.3, 0, h.pos.z + Math.sin(h.yaw) * 1.3);
+    s.vel.set(0, 0, 0);
+    if (s.isPlayer && !silent) this.hud.announce('Afgestegen');
+  }
+
+  nearestFreeHorse(s, maxD = 3.4) {
+    let best = null;
+    let bd = maxD;
+    for (const h of this.horses) {
+      if (h.rider) continue;
+      const d = Math.hypot(h.pos.x - s.pos.x, h.pos.z - s.pos.z);
+      if (d < bd) {
+        bd = d;
+        best = h;
+      }
+    }
+    return best;
   }
 
   // ------------------------------------------------------------------ loop
@@ -127,13 +204,26 @@ export class Game {
       if (s.alive) this.updateBot(s, dt);
       else this.updateDead(s, dt);
     }
-    this.updateProjectiles(dt);
+    for (const h of this.horses) {
+      if (!h.rider) {
+        // rijderloos paard loopt uit en blijft staan
+        h.speed = Math.max(0, h.speed - 6 * dt);
+        if (h.speed > 0) {
+          h.vel.set(Math.sin(h.yaw) * h.speed, 0, Math.cos(h.yaw) * h.speed);
+          this.moveBody(h, dt);
+        }
+      }
+      h.updateAnim(dt);
+    }
+    this.updateArrows(dt);
     for (const s of this.soldiers) {
-      const gs = Math.hypot(s.vel.x, s.vel.z);
-      s.updateAnim(dt, gs);
+      this.tickCombat(s, dt);
+      s.updateAnim(dt, Math.hypot(s.vel.x, s.vel.z));
       if (s.spawnShield > 0) s.spawnShield -= dt;
-      // gezondheid herstelt na 7 s zonder schade
-      if (s.alive && this.time - s.lastHurtT > 7 && s.hp < 100) s.hp = Math.min(100, s.hp + 10 * dt);
+      if (!s.alive) continue;
+      // gezondheid herstelt na 7 s zonder schade; pijlen bijvullen in het eigen fort
+      if (this.time - s.lastHurtT > 7 && s.hp < 100) s.hp = Math.min(100, s.hp + 10 * dt);
+      if (s.arrows < ARROWS_MAX && regionOf(s.pos.x, s.pos.z) === s.team) s.arrows = Math.min(ARROWS_MAX, s.arrows + 4 * dt);
     }
     this.hud.update(this, dt);
     if (this.pendingRestart) {
@@ -155,6 +245,7 @@ export class Game {
     if (!p.alive) {
       this.updateDead(p, dt);
       c.consumeLook();
+      c.jumpPressed = c.switchPressed = c.mountPressed = false;
       return;
     }
 
@@ -162,65 +253,242 @@ export class Game {
     p.yaw -= look.x * 0.0052;
     p.pitch = THREE.MathUtils.clamp(p.pitch - look.y * 0.0042, -0.75, 0.85);
 
-    const speed = c.sprint && c.move.y > 0.3 ? 7.2 : 4.8;
+    if (c.mountPressed) {
+      if (p.mounted) this.dismount(p);
+      else {
+        const h = this.nearestFreeHorse(p);
+        if (h) this.mount(p, h);
+      }
+    }
+    c.mountPressed = false;
+    const want = c.switchPressed ? (p.weapon === 'bow' ? 'sword' : 'bow') : c.selectWeapon;
+    if (want && want !== p.weapon) {
+      p.setWeapon(want);
+      sfx.playSwitch();
+    }
+    c.switchPressed = false;
+    c.selectWeapon = null;
+
     const fx = Math.sin(p.yaw);
     const fz = Math.cos(p.yaw);
     // rechts = (-cos, 0, sin) bij deze yaw-conventie
-    const wx = (fx * c.move.y - fz * c.move.x) * speed;
-    const wz = (fz * c.move.y + fx * c.move.x) * speed;
-    p.vel.x = wx;
-    p.vel.z = wz;
+    const mx = fx * c.move.y - fz * c.move.x;
+    const mz = fz * c.move.y + fx * c.move.x;
+    const mag = Math.min(1, Math.hypot(c.move.x, c.move.y));
 
-    if (c.jumpPressed && p.onGround) {
-      p.vel.y = 6;
-      p.onGround = false;
-    }
-    c.jumpPressed = false;
-    this.moveSoldier(p, dt);
-
-    this.handleWeapon(p, dt, c.firing, c.reloadPressed);
-    c.reloadPressed = false;
-  }
-
-  handleWeapon(s, dt, wantFire, wantReload) {
-    s.fireCd -= dt;
-    if (s.reloadT > 0) {
-      s.reloadT -= dt;
-      if (s.reloadT <= 0) s.ammo = s.cfg.magazine;
-      return;
-    }
-    if ((wantReload && s.ammo < s.cfg.magazine) || s.ammo <= 0) {
-      s.reloadT = s.cfg.reloadTime;
-      if (s.isPlayer) sfx.playReload();
-      return;
-    }
-    if (wantFire && s.fireCd <= 0) {
-      s.fireCd = s.cfg.fireDelay;
-      s.ammo--;
-      if (s.isPlayer) {
-        const moving = Math.hypot(s.vel.x, s.vel.z) > 1;
-        const spread = (moving ? 0.022 : 0.006) + (s.onGround ? 0 : 0.03);
-        const dir = this.spreadDir(dirFromAngles(s.yaw, s.pitch), spread);
-        const origin = this.camera.position.clone();
-        // alles tussen camera en speler negeren
-        const minT = origin.distanceTo(s.eye(_v1)) + 0.2;
-        this.fire(s, origin, dir, minT);
-        s.pitch += 0.02; // terugslag
+    if (p.mounted) {
+      this.ride(p, mx, mz, mag, dt, c.sprint ? 1.25 : 1);
+      c.jumpPressed = false;
+    } else {
+      const speed = c.sprint && c.move.y > 0.3 ? 7 : 4.6;
+      p.vel.x = mx * speed;
+      p.vel.z = mz * speed;
+      if (c.jumpPressed && p.onGround) {
+        p.vel.y = 6;
+        p.onGround = false;
       }
+      c.jumpPressed = false;
+      this.moveBody(p, dt);
     }
+
+    if (c.firing) this.attack(p);
   }
 
-  spreadDir(dir, spread) {
+  // ------------------------------------------------------------------ combat
+  attack(s, target = null) {
+    if (s.attackCd > 0 || !s.alive) return;
+    if (s.weapon === 'sword') {
+      s.swingT = 0;
+      s.attackCd = s.cfg.sword.delay;
+      s.pendingHit = 0.13;
+      s.lastAttackT = this.time;
+      sfx.playSwing(this.volumeAt(s.pos, 25));
+      return;
+    }
+    if (s.arrows < 1) {
+      if (s.isPlayer) this.hud.announce('Pijlkoker leeg — terug naar je fort of pak je zwaard (Q)');
+      s.attackCd = 0.6;
+      return;
+    }
+    if (s.drawT < 1) return;
+
+    const origin = s.bowWorld(new THREE.Vector3());
+    let aimPoint;
+    if (s.isPlayer) {
+      // richt op wat midden in beeld staat
+      const camPos = this.camera.position;
+      const dir = dirFromAngles(s.yaw, s.pitch, _v1);
+      const minT = camPos.distanceTo(s.eye(_v2)) + 0.3;
+      const tObs = this.rayObstacles(camPos, dir, 160);
+      const hit = this.raySoldiers(camPos, dir, Math.min(tObs, 160), s, minT);
+      const t = hit ? hit.t : Math.min(tObs, 160);
+      aimPoint = camPos.clone().addScaledVector(dir, Math.max(t, minT + 2));
+    } else {
+      // vijand + voorsprong voor zijn beweging
+      const tt = target.pos.distanceTo(s.pos) / s.cfg.bow.speed;
+      aimPoint = new THREE.Vector3(target.pos.x + target.vel.x * tt, target.pos.y + 1.25, target.pos.z + target.vel.z * tt);
+    }
+    const dir = ballisticDir(origin, aimPoint, s.cfg.bow.speed);
+    const spread = s.isPlayer ? (Math.hypot(s.vel.x, s.vel.z) > 1 ? 0.012 : 0.004) : this.botDiff().spread;
     dir.x += (Math.random() - 0.5) * 2 * spread;
     dir.y += (Math.random() - 0.5) * 2 * spread;
     dir.z += (Math.random() - 0.5) * 2 * spread;
-    return dir.normalize();
+    dir.normalize();
+    this.launchArrow(s, origin, dir);
+    s.arrows -= 1;
+    s.drawT = 0;
+    s.attackCd = s.cfg.bow.delay;
+    s.lastAttackT = this.time;
+    sfx.playBow(this.volumeAt(origin, 60));
+  }
+
+  tickCombat(s, dt) {
+    s.attackCd -= dt;
+    if (s.pendingHit >= 0) {
+      s.pendingHit -= dt;
+      if (s.pendingHit < 0 && s.alive) this.resolveMelee(s);
+    }
+  }
+
+  resolveMelee(s) {
+    const sw = s.cfg.sword;
+    const range = sw.range + (s.mounted ? 0.9 : 0);
+    const fx = Math.sin(s.yaw);
+    const fz = Math.cos(s.yaw);
+    let hits = 0;
+    for (const e of this.soldiers) {
+      if (e.team === s.team || !e.alive) continue;
+      const dx = e.pos.x - s.pos.x;
+      const dz = e.pos.z - s.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d - e.radius > range) continue;
+      if (d > 0.6 && (dx * fx + dz * fz) / d < 0.45) continue;
+      if (Math.abs(e.pos.y - s.pos.y) > 2.2) continue;
+      let dmg = sw.damage;
+      if (s.mounted && s.mounted.speed > 6) dmg *= 1.3; // charge te paard
+      // schild vangt een deel op als de verdediger de aanvaller aankijkt
+      let blocked = false;
+      if (e.shield && e.weapon === 'sword') {
+        const facing = (-dx * Math.sin(e.yaw) - dz * Math.cos(e.yaw)) / (d || 1);
+        if (facing > 0.5) {
+          dmg *= 0.55;
+          blocked = true;
+        }
+      }
+      this.damage(e, dmg, s, false);
+      const at = _v1.set(e.pos.x, e.pos.y + 1.3, e.pos.z);
+      if (blocked) {
+        sfx.playClash(this.volumeAt(at, 30));
+        this.spawnPuff(at, '#ffe08a', 0.06, 5);
+      } else {
+        sfx.playFlesh(this.volumeAt(at, 30));
+        this.spawnPuff(at, '#8b1a1a', 0.1, 6);
+      }
+      if (++hits >= 2) break;
+    }
+  }
+
+  damage(target, amount, attacker, head) {
+    if (!target.alive || target.spawnShield > 0) return;
+    let dmg = amount * (head ? 2 : 1);
+    if (target.isPlayer && !attacker.isPlayer) dmg *= this.diff.damageToPlayer;
+    target.hp -= dmg;
+    target.lastHurtT = this.time;
+    if (!target.isPlayer && target.ai && (!target.ai.target || Math.random() < 0.5)) {
+      target.ai.target = attacker;
+      target.ai.reactT = 0.25;
+    }
+    if (target.isPlayer) {
+      this.hud.hurt(attacker, this.player);
+      sfx.playHurt();
+    }
+    if (attacker.isPlayer) {
+      this.hud.hitMarker(head);
+      sfx.playHit();
+    }
+    if (target.hp <= 0) this.kill(target, attacker, head);
+  }
+
+  kill(target, attacker, head) {
+    target.hp = 0;
+    target.alive = false;
+    target.deadT = 0;
+    target.deaths++;
+    target.pendingHit = -1;
+    if (target.mounted) this.dismount(target, true);
+    attacker.kills++;
+    this.score[attacker.team]++;
+    this.hud.killFeed(attacker, target, head, this);
+    if (attacker.isPlayer) sfx.playKill();
+    if (this.state === 'playing' && this.score[attacker.team] >= SCORE_LIMIT) this.gameOver(attacker.team);
+    if (this.state === 'attract' && this.score[attacker.team] >= SCORE_LIMIT) this.pendingRestart = true;
+  }
+
+  gameOver(winner) {
+    this.state = 'over';
+    this.controls.enabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.hud.gameOver(this, winner);
+  }
+
+  volumeAt(pos, range) {
+    if (!this.player) return 0;
+    return Math.max(0, 1 - pos.distanceTo(this.camera.position) / range);
+  }
+
+  botDiff() {
+    return this.state === 'attract' ? DIFFICULTY.normal : this.diff;
+  }
+
+  // ------------------------------------------------------------------ riding
+  // Paard sturen: draait geleidelijk naar de gewenste richting, kan niet zijwaarts.
+  ride(s, dx, dz, mag, dt, boost = 1) {
+    const h = s.mounted;
+    let targetSpeed = 0;
+    if (mag > 0.1) {
+      const want = Math.atan2(dx, dz);
+      const diff = angleDiff(h.yaw, want);
+      h.yaw += THREE.MathUtils.clamp(diff, -2.6 * dt, 2.6 * dt);
+      targetSpeed = HORSE_SPEED * boost * mag * (Math.abs(diff) > 2 ? 0.35 : 1);
+    }
+    h.speed += THREE.MathUtils.clamp(targetSpeed - h.speed, -14 * dt, 6 * dt);
+    h.vel.set(Math.sin(h.yaw) * h.speed, 0, Math.cos(h.yaw) * h.speed);
+    const bx = h.pos.x;
+    const bz = h.pos.z;
+    this.moveBody(h, dt);
+    if (dt > 0) h.speed = Math.min(h.speed, Math.hypot(h.pos.x - bx, h.pos.z - bz) / dt + 1.5); // remmen tegen muren
+    s.pos.set(h.pos.x, h.pos.y + RIDER_Y, h.pos.z);
+    s.vel.copy(h.vel);
+    s.onGround = true;
+
+    // hoefgetrappel voor de speler
+    if (s.isPlayer && h.speed > 3) {
+      const beat = Math.floor(h.gallopPhase / Math.PI);
+      if (beat !== h.lastBeat) sfx.playHoof(Math.min(1, h.speed / 10));
+      h.lastBeat = beat;
+    }
+
+    // vertrappen: vijanden voor een galopperend paard lopen schade op
+    if (h.speed > 6) {
+      const px = h.pos.x + Math.sin(h.yaw) * 0.9;
+      const pz = h.pos.z + Math.cos(h.yaw) * 0.9;
+      for (const e of this.soldiers) {
+        if (e.team === s.team || !e.alive || e.mounted) continue;
+        if (Math.hypot(e.pos.x - px, e.pos.z - pz) > 1.2) continue;
+        const last = h.trampleCd.get(e) || -9;
+        if (this.time - last < 1) continue;
+        h.trampleCd.set(e, this.time);
+        e.pos.x += Math.sin(h.yaw) * 1.2 + Math.cos(h.yaw) * 0.6;
+        e.pos.z += Math.cos(h.yaw) * 1.2 - Math.sin(h.yaw) * 0.6;
+        this.damage(e, 28, s, false);
+      }
+    }
   }
 
   // ------------------------------------------------------------------ AI
   updateBot(b, dt) {
     const ai = b.ai;
-    const d = this.state === 'attract' ? DIFFICULTY.normal : this.diff;
+    const d = this.botDiff();
     ai.thinkT -= dt;
     if (ai.thinkT <= 0) {
       ai.thinkT = 0.25 + Math.random() * 0.2;
@@ -229,10 +497,16 @@ export class Game {
         ai.target = t;
         ai.reactT = d.reaction * (0.7 + Math.random() * 0.6);
       }
-      // vastgelopen? nieuw doel kiezen
+      ai.chase = ai.target && regionOf(b.pos.x, b.pos.z) !== regionOf(ai.target.pos.x, ai.target.pos.z)
+        ? this.gatePath(b.pos, ai.target.pos)
+        : [];
       ai.stuckT += 0.35;
       if (ai.stuckT > 1.5) {
-        if (ai.lastPos.distanceTo(b.pos) < 0.8 && !ai.target) ai.path = [];
+        if (ai.lastPos.distanceTo(b.pos) < 0.8) {
+          ai.path = [];
+          ai.unstickT = 0.8; // even een willekeurige kant op
+          ai.unstickDir = Math.random() * Math.PI * 2;
+        }
         ai.lastPos.copy(b.pos);
         ai.stuckT = 0;
       }
@@ -240,104 +514,157 @@ export class Game {
 
     let moveX = 0;
     let moveZ = 0;
-    let speed = 4.2;
-    const tgt = ai.target;
-    if (tgt && tgt.alive) {
+    let mag = 1;
+    let speed = 4.3;
+    const tgt = ai.target && ai.target.alive ? ai.target : null;
+    let faceYaw = null;
+
+    if (tgt) {
       const dx = tgt.pos.x - b.pos.x;
       const dz = tgt.pos.z - b.pos.z;
-      const dist = Math.hypot(dx, dz);
-      const wantYaw = Math.atan2(dx, dz);
-      const wantPitch = Math.atan2(tgt.pos.y + 1.2 - (b.pos.y + 1.45), dist);
-      const turn = d.turnRate * dt;
-      b.yaw += THREE.MathUtils.clamp(angleDiff(b.yaw, wantYaw), -turn, turn);
-      b.pitch += THREE.MathUtils.clamp(wantPitch - b.pitch, -turn, turn);
-
-      ai.strafeT -= dt;
-      if (ai.strafeT <= 0) {
-        ai.strafeT = 0.8 + Math.random() * 1.6;
-        ai.strafe = Math.random() < 0.5 ? -1 : Math.random() < 0.3 ? 0 : 1;
-      }
+      const dist = Math.hypot(dx, dz) || 0.01;
       const fx = dx / dist;
       const fz = dz / dist;
-      const fwd = dist > 22 ? 1 : dist < 10 ? -0.6 : 0;
-      moveX = fx * fwd + fz * ai.strafe * 0.8;
-      moveZ = fz * fwd - fx * ai.strafe * 0.8;
-      speed = 3.6;
+      faceYaw = Math.atan2(dx, dz);
 
+      // wapenkeuze: boogschutters schieten, maar trekken het zwaard van dichtbij
+      const ranged = b.role === 'archer' && b.arrows >= 1 && dist > 5;
+      if (ranged && b.weapon !== 'bow') b.setWeapon('bow');
+      if (!ranged && b.weapon !== 'sword') b.setWeapon('sword');
+
+      if (ai.chase.length) {
+        const wp = ai.chase[0];
+        const wx = wp.x - b.pos.x;
+        const wz = wp.z - b.pos.z;
+        const wd = Math.hypot(wx, wz);
+        if (wd < 2 && ai.chase.length > 1) ai.chase.shift();
+        moveX = wx / (wd || 1);
+        moveZ = wz / (wd || 1);
+        if (b.weapon === 'sword') faceYaw = Math.atan2(moveX, moveZ);
+      } else if (b.weapon === 'bow') {
+        ai.strafeT -= dt;
+        if (ai.strafeT <= 0) {
+          ai.strafeT = 0.8 + Math.random() * 1.6;
+          ai.strafe = Math.random() < 0.5 ? -1 : Math.random() < 0.3 ? 0 : 1;
+        }
+        const fwd = dist > 42 ? 1 : dist < 14 ? -0.7 : 0;
+        moveX = fx * fwd + fz * ai.strafe * 0.7;
+        moveZ = fz * fwd - fx * ai.strafe * 0.7;
+        speed = 3.4;
+      } else if (b.mounted) {
+        // charge: recht op het doel af, na het passeren even doorrijden en omkeren
+        if (ai.passT > 0) {
+          ai.passT -= dt;
+          moveX = Math.sin(b.mounted.yaw);
+          moveZ = Math.cos(b.mounted.yaw);
+        } else {
+          moveX = fx;
+          moveZ = fz;
+          if (dist < 2.5) ai.passT = 0.9;
+        }
+      } else {
+        const reach = b.cfg.sword.range * 0.75;
+        if (dist > reach) {
+          moveX = fx;
+          moveZ = fz;
+          speed = dist > 12 ? 5.2 : 4.4;
+        } else {
+          ai.strafeT -= dt;
+          if (ai.strafeT <= 0) {
+            ai.strafeT = 0.5 + Math.random();
+            ai.strafe = Math.random() < 0.5 ? -1 : 1;
+          }
+          moveX = fz * ai.strafe * 0.5;
+          moveZ = -fx * ai.strafe * 0.5;
+          speed = 2.5;
+        }
+      }
+
+      // aanvallen
       ai.reactT -= dt;
-      const aimed = Math.abs(angleDiff(b.yaw, wantYaw)) < 0.12;
-      const shoot = ai.reactT <= 0 && aimed && dist < 75;
-      if (shoot && b.fireCd <= 0 && b.reloadT <= 0 && b.ammo > 0) {
-        const origin = b.muzzleWorld(_v3);
-        const aim = _v1.set(tgt.pos.x, tgt.pos.y + 1.15 + Math.random() * 0.5, tgt.pos.z).sub(origin).normalize();
-        this.fire(b, origin.clone(), this.spreadDir(aim.clone(), d.spread), 0);
-        b.ammo--;
-        b.fireCd = b.cfg.fireDelay * (1.2 + Math.random() * 0.9);
+      if (ai.reactT <= 0) {
+        const aimErr = Math.abs(angleDiff(b.yaw, Math.atan2(dx, dz)));
+        if (b.weapon === 'bow') {
+          if (aimErr < 0.15 && dist < 85 && !ai.chase.length) this.attack(b, tgt);
+        } else {
+          const reach = b.cfg.sword.range + (b.mounted ? 0.9 : 0) + 0.3;
+          if (aimErr < 0.7 && dist < reach && Math.abs(tgt.pos.y - b.pos.y) < 2) this.attack(b, tgt);
+        }
       }
-      b.fireCd -= dt;
-      if (b.reloadT > 0) {
-        b.reloadT -= dt;
-        if (b.reloadT <= 0) b.ammo = b.cfg.magazine;
-      } else if (b.ammo <= 0) b.reloadT = b.cfg.reloadTime;
+      // pitch voor de boog
+      if (b.weapon === 'bow') {
+        const dir = ballisticDir(b.eye(_v1), _v2.set(tgt.pos.x, tgt.pos.y + 1.2, tgt.pos.z), b.cfg.bow.speed, _v3);
+        b.pitch = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1));
+      } else b.pitch *= 0.9;
     } else {
-      // patrouilleren naar een doel (via bressen in de muur)
-      b.fireCd -= dt;
-      if (b.ammo < b.cfg.magazine && b.reloadT <= 0) b.reloadT = b.cfg.reloadTime;
-      if (b.reloadT > 0) {
-        b.reloadT -= dt;
-        if (b.reloadT <= 0) b.ammo = b.cfg.magazine;
-      }
+      // patrouilleren (via de poorten van de forten)
+      if (b.role === 'archer' && b.arrows >= 1 && b.weapon !== 'bow') b.setWeapon('bow');
       if (!ai.path.length) ai.path = this.planPath(b);
       const wp = ai.path[0];
       const dx = wp.x - b.pos.x;
       const dz = wp.z - b.pos.z;
       const dist = Math.hypot(dx, dz);
-      if (dist < 1.5) ai.path.shift();
+      if (dist < (b.mounted ? 2.5 : 1.5)) ai.path.shift();
       else {
         moveX = dx / dist;
         moveZ = dz / dist;
       }
-      const wantYaw = Math.atan2(moveX, moveZ);
-      if (moveX || moveZ) b.yaw += THREE.MathUtils.clamp(angleDiff(b.yaw, wantYaw), -3 * dt, 3 * dt);
       b.pitch *= 0.9;
     }
 
-    // simpele obstakelontwijking
+    if (ai.unstickT > 0) {
+      ai.unstickT -= dt;
+      moveX = Math.sin(ai.unstickDir);
+      moveZ = Math.cos(ai.unstickDir);
+    }
+
+    // obstakels ontwijken
     if (moveX || moveZ) {
       const len = Math.hypot(moveX, moveZ);
+      mag = Math.min(1, len);
       moveX /= len;
       moveZ /= len;
-      const o = _v1.set(b.pos.x, b.pos.y + 0.5, b.pos.z);
-      for (const rot of [0, 0.8, -0.8, 1.6, -1.6]) {
+      const o = _v1.set(b.pos.x, (b.mounted ? b.mounted.pos.y : b.pos.y) + 0.6, b.pos.z);
+      const look = b.mounted ? 3 : 1.6;
+      for (const rot of [0, 0.7, -0.7, 1.4, -1.4, 2.1, -2.1]) {
         const c = Math.cos(rot);
         const s = Math.sin(rot);
         const rx = moveX * c - moveZ * s;
         const rz = moveX * s + moveZ * c;
-        if (this.rayObstacles(o, _v2.set(rx, 0, rz), 1.6) === Infinity) {
+        if (this.rayObstacles(o, _v2.set(rx, 0, rz), look) === Infinity) {
           moveX = rx;
           moveZ = rz;
           break;
         }
       }
+    } else mag = 0;
+
+    // kijkrichting
+    const want = faceYaw !== null ? faceYaw : moveX || moveZ ? Math.atan2(moveX, moveZ) : b.yaw;
+    const turn = (faceYaw !== null ? d.turnRate : 3) * dt;
+    b.yaw += THREE.MathUtils.clamp(angleDiff(b.yaw, want), -turn, turn);
+
+    if (b.mounted) this.ride(b, moveX, moveZ, mag, dt);
+    else {
+      b.vel.x = moveX * speed * mag;
+      b.vel.z = moveZ * speed * mag;
+      this.moveBody(b, dt);
     }
-    b.vel.x = moveX * speed;
-    b.vel.z = moveZ * speed;
-    this.moveSoldier(b, dt);
   }
 
   findTarget(b) {
     let best = null;
-    let bestD = 70;
+    const maxRange = b.role === 'archer' ? 85 : 70;
+    let bestD = maxRange;
     const eye = b.eye(_v1);
     const cur = b.ai.target;
+    const fwd = dirFromAngles(b.yaw, 0, _v3);
     for (const s of this.soldiers) {
       if (s.team === b.team || !s.alive) continue;
-      const dd = s.pos.distanceTo(b.pos) - (s === cur ? 8 : 0); // huidig doel licht voorkeur
+      const dd = s.pos.distanceTo(b.pos) - (s === cur ? 8 : 0);
       if (dd >= bestD) continue;
       const to = s.eye(_v2).sub(eye);
       const len = to.length();
-      // gezichtsveld: niet achter je kijken tenzij dichtbij of net beschoten
-      const fwd = dirFromAngles(b.yaw, 0, _v3);
       const dot = (to.x * fwd.x + to.z * fwd.z) / len;
       if (dot < -0.2 && len > 12 && this.time - b.lastHurtT > 1.5) continue;
       if (this.rayObstacles(eye, to.divideScalar(len), len) < len) continue;
@@ -347,35 +674,54 @@ export class Game {
     return best;
   }
 
-  planPath(b) {
-    const enemySide = b.team === 'ottoman' ? 1 : -1;
-    const r = Math.random();
-    let gx;
-    let gz;
-    if (r < 0.6) {
-      gx = (Math.random() * 2 - 1) * 45;
-      gz = -28 + Math.random() * 58; // middenveld
-    } else {
-      gx = (Math.random() * 2 - 1) * 45;
-      gz = enemySide > 0 ? 42 + Math.random() * 12 : -45 + Math.random() * 12;
-    }
-    const goal = new THREE.Vector3(gx, 0, gz);
+  // Route van A naar B via de poorten als een van beide in een fort ligt.
+  gatePath(from, to) {
     const path = [];
-    const sideA = b.pos.z < WALL_Z;
-    const sideB = gz < WALL_Z;
-    if (sideA !== sideB) {
-      // door de dichtstbijzijnde bres
-      let gap = GAPS[0];
-      for (const g of GAPS) if (Math.abs(g - b.pos.x) + Math.abs(g - gx) < Math.abs(gap - b.pos.x) + Math.abs(gap - gx)) gap = g;
-      path.push(new THREE.Vector3(gap, 0, sideA ? WALL_Z - 5 : WALL_Z + 5));
-      path.push(new THREE.Vector3(gap, 0, sideA ? WALL_Z + 5 : WALL_Z - 5));
+    let cur = from;
+    const r1 = regionOf(from.x, from.z);
+    const r2 = regionOf(to.x, to.z);
+    const pick = (team, a, b) => {
+      let best = null;
+      let bd = Infinity;
+      for (const g of fortGates(team)) {
+        const d = Math.hypot(g.x - a.x, g.z - a.z) + Math.hypot(g.x - b.x, g.z - b.z);
+        if (d < bd) {
+          bd = d;
+          best = g;
+        }
+      }
+      return best;
+    };
+    if (r1 !== 'field' && r1 !== r2) {
+      const g = pick(r1, cur, to);
+      path.push(new THREE.Vector3(g.x + g.nx * 3, 0, g.z + g.nz * 3));
+      const out = new THREE.Vector3(g.x - g.nx * 4, 0, g.z - g.nz * 4);
+      path.push(out);
+      cur = out;
     }
-    path.push(goal);
+    if (r2 !== 'field' && r2 !== r1) {
+      const g = pick(r2, cur, to);
+      path.push(new THREE.Vector3(g.x - g.nx * 4, 0, g.z - g.nz * 4));
+      path.push(new THREE.Vector3(g.x + g.nx * 3, 0, g.z + g.nz * 3));
+    }
+    path.push(new THREE.Vector3(to.x, 0, to.z));
     return path;
   }
 
+  planPath(b) {
+    const enemySide = b.team === 'ottoman' ? 1 : -1;
+    let goal;
+    if (b.role === 'archer' || Math.random() < 0.55) {
+      goal = new THREE.Vector3((Math.random() * 2 - 1) * 45, 0, (Math.random() * 2 - 1) * 36 + enemySide * 4);
+    } else {
+      // aanval op het vijandelijke fort
+      goal = new THREE.Vector3((Math.random() * 2 - 1) * 16, 0, enemySide * (54 + Math.random() * 18));
+    }
+    return this.gatePath(b.pos, goal);
+  }
+
   // ------------------------------------------------------------------ physics
-  moveSoldier(s, dt) {
+  moveBody(s, dt) {
     s.pos.x += s.vel.x * dt;
     s.pos.z += s.vel.z * dt;
     s.vel.y -= 16 * dt;
@@ -384,6 +730,7 @@ export class Game {
     let floor = 0;
     const r = s.radius;
     for (const o of this.obstacles) {
+      if (o.min.y > s.pos.y + 1.9) continue; // poortdorpel: eronder door
       const cx = THREE.MathUtils.clamp(s.pos.x, o.min.x, o.max.x);
       const cz = THREE.MathUtils.clamp(s.pos.z, o.min.z, o.max.z);
       const dx = s.pos.x - cx;
@@ -399,7 +746,6 @@ export class Game {
         s.pos.x = cx + (dx / d) * r;
         s.pos.z = cz + (dz / d) * r;
       } else {
-        // middelpunt in de doos: duw naar de dichtstbijzijnde zijkant
         const ex = [o.min.x - r - s.pos.x, o.max.x + r - s.pos.x];
         const ez = [o.min.z - r - s.pos.z, o.max.z + r - s.pos.z];
         const mx = Math.abs(ex[0]) < Math.abs(ex[1]) ? ex[0] : ex[1];
@@ -408,21 +754,30 @@ export class Game {
         else s.pos.z += mz;
       }
     }
-    // soldaten duwen elkaar zachtjes weg
-    for (const o of this.soldiers) {
-      if (o === s || !o.alive) continue;
-      const dx = s.pos.x - o.pos.x;
-      const dz = s.pos.z - o.pos.z;
+    // soldaten en paarden duwen elkaar weg
+    const isHorse = s instanceof Horse;
+    const pushFrom = (ox, oz, rr) => {
+      const dx = s.pos.x - ox;
+      const dz = s.pos.z - oz;
       const d2 = dx * dx + dz * dz;
-      if (d2 < 0.5 && d2 > 1e-6) {
+      if (d2 < rr * rr && d2 > 1e-6) {
         const d = Math.sqrt(d2);
-        const push = (0.71 - d) * 0.5;
+        const push = (rr - d) * 0.5;
         s.pos.x += (dx / d) * push;
         s.pos.z += (dz / d) * push;
       }
+    };
+    for (const o of this.soldiers) {
+      if (o === s || !o.alive || o.mounted || (isHorse && o === s.rider)) continue;
+      if (isHorse && s.rider && o.team !== s.rider.team) continue; // vijanden worden vertrapt
+      pushFrom(o.pos.x, o.pos.z, r + o.radius - 0.05);
     }
-    s.pos.x = THREE.MathUtils.clamp(s.pos.x, -MAP_HALF, MAP_HALF);
-    s.pos.z = THREE.MathUtils.clamp(s.pos.z, -MAP_HALF, MAP_HALF);
+    for (const h of this.horses) {
+      if (h === s || h === s.mounted) continue;
+      pushFrom(h.pos.x, h.pos.z, r + h.radius);
+    }
+    s.pos.x = THREE.MathUtils.clamp(s.pos.x, -MAP_X, MAP_X);
+    s.pos.z = THREE.MathUtils.clamp(s.pos.z, -MAP_Z, MAP_Z);
 
     if (s.pos.y <= floor) {
       s.pos.y = floor;
@@ -444,179 +799,132 @@ export class Game {
     return best <= maxT ? best : Infinity;
   }
 
-  // ray tegen staande cilinders van soldaten
-  raySoldiers(o, d, maxT, shooter, minT) {
+  // ray tegen staande cilinders (vijandelijke soldaten, optioneel paarden)
+  raySoldiers(o, d, maxT, shooter, minT, withHorses = false) {
     let hit = null;
     let best = maxT;
-    for (const s of this.soldiers) {
-      if (s === shooter || !s.alive || s.team === shooter.team) continue;
-      const ox = o.x - s.pos.x;
-      const oz = o.z - s.pos.z;
+    const test = (px, py, pz, radius, height, obj) => {
+      const ox = o.x - px;
+      const oz = o.z - pz;
       const a = d.x * d.x + d.z * d.z;
-      if (a < 1e-8) continue;
+      if (a < 1e-8) return;
       const bq = 2 * (ox * d.x + oz * d.z);
-      const c = ox * ox + oz * oz - s.radius * s.radius;
+      const c = ox * ox + oz * oz - radius * radius;
       const disc = bq * bq - 4 * a * c;
-      if (disc < 0) continue;
+      if (disc < 0) return;
       const sq = Math.sqrt(disc);
       for (const t of [(-bq - sq) / (2 * a), (-bq + sq) / (2 * a)]) {
         if (t < minT || t >= best) continue;
-        const y = o.y + d.y * t - s.pos.y;
-        if (y >= 0 && y <= s.height) {
+        const y = o.y + d.y * t - py;
+        if (y >= 0 && y <= height) {
           best = t;
-          hit = { soldier: s, t, head: y > 1.62 };
-          break;
+          hit = { obj, soldier: obj instanceof Soldier ? obj : null, t, head: y > 1.62 && obj instanceof Soldier };
+          return;
         }
       }
+    };
+    for (const s of this.soldiers) {
+      if (s === shooter || !s.alive || s.team === shooter.team) continue;
+      test(s.pos.x, s.pos.y, s.pos.z, s.radius, s.height, s);
     }
+    if (withHorses) for (const h of this.horses) if (h !== shooter.mounted) test(h.pos.x, h.pos.y, h.pos.z, 0.55, 1.65, h);
     return hit;
   }
 
-  // ------------------------------------------------------------------ combat
-  fire(shooter, origin, dir, minT) {
-    shooter.showFlash();
-    shooter.lastFireT = this.time;
-    const range = 140;
-    const tObs = this.rayObstacles(origin, dir, range);
-    const hit = this.raySoldiers(origin, dir, Math.min(tObs, range), shooter, minT);
-    const endT = hit ? hit.t : Math.min(tObs, range);
-    const end = origin.clone().addScaledVector(dir, endT);
-
-    const muzzle = shooter.muzzleWorld(new THREE.Vector3());
-    this.spawnProjectile(shooter, muzzle, end, hit, tObs < range && !hit);
-
-    const dist = this.player ? muzzle.distanceTo(this.camera.position) : 30;
-    sfx.playShot(shooter.cfg.weapon, shooter.isPlayer ? 1 : Math.max(0, 1 - dist / 90) * 0.7);
-    if (shooter.cfg.weapon === 'musket') this.spawnSmoke(muzzle, dir);
-  }
-
-  damage(target, amount, attacker, head) {
-    if (!target.alive || target.spawnShield > 0) return;
-    let dmg = amount * (head ? 2 : 1);
-    if (target.isPlayer && !attacker.isPlayer) dmg *= this.diff.damageToPlayer;
-    target.hp -= dmg;
-    target.lastHurtT = this.time;
-    if (!target.isPlayer && target.ai && !target.ai.target) {
-      target.ai.target = attacker;
-      target.ai.reactT = 0.25;
-    }
-    if (target.isPlayer) {
-      this.hud.hurt(attacker, this.player);
-      sfx.playHurt();
-    }
-    if (attacker.isPlayer) {
-      this.hud.hitMarker(head);
-      sfx.playHit();
-    }
-    if (target.hp <= 0) this.kill(target, attacker, head);
-  }
-
-  kill(target, attacker, head) {
-    target.hp = 0;
-    target.alive = false;
-    target.deadT = 0;
-    target.deaths++;
-    target.reloadT = 0;
-    attacker.kills++;
-    this.score[attacker.team]++;
-    this.hud.killFeed(attacker, target, head, this);
-    if (attacker.isPlayer) sfx.playKill();
-    if (this.state === 'playing' && this.score[attacker.team] >= SCORE_LIMIT) this.gameOver(attacker.team);
-    if (this.state === 'attract' && this.score[attacker.team] >= SCORE_LIMIT) this.pendingRestart = true;
-  }
-
-  gameOver(winner) {
-    this.state = 'over';
-    this.controls.enabled = false;
-    if (document.pointerLockElement) document.exitPointerLock();
-    this.hud.gameOver(this, winner);
-  }
-
-  // ------------------------------------------------------------------ fx
+  // ------------------------------------------------------------------ arrows & fx
   _initFx() {
-    this.fxGeo = {
-      ball: new THREE.SphereGeometry(0.05, 6, 4),
-      bolt: new THREE.CylinderGeometry(0.015, 0.015, 0.7, 5),
-      puff: new THREE.SphereGeometry(1, 8, 6),
-      tracer: new THREE.CylinderGeometry(0.012, 0.012, 1, 4),
+    const shaft = new THREE.BoxGeometry(0.025, 0.8, 0.025);
+    const tip = new THREE.ConeGeometry(0.03, 0.09, 4).translate(0, 0.44, 0);
+    const f1 = new THREE.BoxGeometry(0.06, 0.14, 0.004).translate(0, -0.33, 0);
+    const f2 = new THREE.BoxGeometry(0.004, 0.14, 0.06).translate(0, -0.33, 0);
+    const parts = [shaft, tip, f1, f2].map((g) => (g.index ? g.toNonIndexed() : g));
+    this.arrowGeo = mergeGeometries(parts.slice(0, 2));
+    this.fletchGeo = mergeGeometries(parts.slice(2));
+    this.arrowMat = new THREE.MeshLambertMaterial({ color: '#b89a64' });
+    this.fletchMat = {
+      ottoman: new THREE.MeshLambertMaterial({ color: '#d0202e' }),
+      byzantine: new THREE.MeshLambertMaterial({ color: '#f1efe6' }),
     };
-    this.fxMat = {
-      ball: new THREE.MeshBasicMaterial({ color: '#ffd27a' }),
-      bolt: new THREE.MeshBasicMaterial({ color: '#4a3520' }),
-      tracer: new THREE.MeshBasicMaterial({ color: '#ffe6a0', transparent: true, opacity: 0.55 }),
-    };
+    this.puffGeo = new THREE.SphereGeometry(1, 8, 6);
   }
 
-  spawnProjectile(shooter, from, to, hit, impact) {
-    const isBolt = shooter.cfg.weapon === 'crossbow';
-    const mesh = new THREE.Mesh(isBolt ? this.fxGeo.bolt : this.fxGeo.ball, isBolt ? this.fxMat.bolt : this.fxMat.ball);
-    mesh.position.copy(from);
-    const dir = to.clone().sub(from);
-    const len = dir.length();
-    dir.normalize();
-    if (isBolt) mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    this.scene.add(mesh);
-    this.projectiles.push({
-      mesh, from: from.clone(), dir, len, t: 0,
-      speed: shooter.cfg.projectileSpeed, shooter, hit, impact,
-      damage: shooter.cfg.damage,
+  launchArrow(shooter, origin, dir) {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(this.arrowGeo, this.arrowMat));
+    g.add(new THREE.Mesh(this.fletchGeo, this.fletchMat[shooter.team]));
+    g.position.copy(origin);
+    g.quaternion.setFromUnitVectors(UP, dir);
+    this.scene.add(g);
+    this.arrows.push({
+      mesh: g,
+      pos: origin.clone(),
+      vel: dir.clone().multiplyScalar(shooter.cfg.bow.speed),
+      shooter,
+      damage: shooter.cfg.bow.damage,
+      life: 6,
     });
-    if (!isBolt) {
-      // korte rooksliert/tracer van de musketkogel
-      const tr = new THREE.Mesh(this.fxGeo.tracer, this.fxMat.tracer.clone());
-      tr.position.copy(from).addScaledVector(dir, len / 2);
-      tr.scale.set(1, len, 1);
-      tr.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      this.scene.add(tr);
-      this.particles.push({ mesh: tr, life: 0.08, max: 0.08, kind: 'tracer' });
-    }
   }
 
-  updateProjectiles(dt) {
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
-      p.t += p.speed * dt;
-      if (p.t >= p.len) {
-        const end = p.from.clone().addScaledVector(p.dir, p.len);
-        if (p.hit) {
-          this.damage(p.hit.soldier, p.damage, p.shooter, p.hit.head);
-          this.spawnPuff(end, '#8b1a1a', 0.12, 6);
-        } else if (p.impact) {
-          this.spawnPuff(end, '#b8a888', 0.18, 5);
-          if (this.player) sfx.playImpact(Math.max(0, 1 - end.distanceTo(this.camera.position) / 30));
-        }
-        if (p.hit || !p.impact || p.shooter.cfg.weapon !== 'crossbow') {
-          this.scene.remove(p.mesh);
-        } else {
-          // kruisboogpijl blijft even steken
-          p.mesh.position.copy(end).addScaledVector(p.dir, 0.2);
-          this.particles.push({ mesh: p.mesh, life: 6, max: 6, kind: 'stuck' });
-        }
-        this.projectiles.splice(i, 1);
+  updateArrows(dt) {
+    for (let i = this.arrows.length - 1; i >= 0; i--) {
+      const a = this.arrows[i];
+      a.life -= dt;
+      a.vel.y -= GRAVITY * dt;
+      const step = _v1.copy(a.vel).multiplyScalar(dt);
+      const len = step.length();
+      const dir = _v2.copy(step).divideScalar(len);
+      const tObs = this.rayObstacles(a.pos, dir, len);
+      const hit = this.raySoldiers(a.pos, dir, Math.min(tObs, len), a.shooter, 0, true);
+      let done = false;
+      if (hit) {
+        const at = a.pos.clone().addScaledVector(dir, hit.t);
+        if (hit.soldier) {
+          this.damage(hit.soldier, a.damage, a.shooter, hit.head);
+          this.spawnPuff(at, '#8b1a1a', 0.1, 6);
+          this.scene.remove(a.mesh);
+        } else this.stick(a, at, dir); // in een paardenlijf: geen schade aan de ruiter
+        done = true;
+      } else if (tObs <= len) {
+        const at = a.pos.clone().addScaledVector(dir, tObs);
+        this.stick(a, at, dir);
+        this.spawnPuff(at, '#b8a888', 0.1, 3);
+        sfx.playThunk(this.volumeAt(at, 25));
+        done = true;
       } else {
-        p.mesh.position.copy(p.from).addScaledVector(p.dir, p.t);
+        a.pos.add(step);
+        a.mesh.position.copy(a.pos);
+        a.mesh.quaternion.setFromUnitVectors(UP, dir);
+      }
+      if (done || a.life <= 0) {
+        if (!done) this.scene.remove(a.mesh);
+        this.arrows.splice(i, 1);
+      }
+    }
+    for (let i = this.stuck.length - 1; i >= 0; i--) {
+      const s = this.stuck[i];
+      s.life -= dt;
+      if (s.life <= 0) {
+        this.scene.remove(s.mesh);
+        this.stuck.splice(i, 1);
       }
     }
   }
 
-  spawnSmoke(at, dir) {
-    for (let i = 0; i < 3; i++) {
-      const m = new THREE.Mesh(this.fxGeo.puff, new THREE.MeshLambertMaterial({ color: '#d8d4cc', transparent: true, opacity: 0.5, depthWrite: false }));
-      m.position.copy(at).addScaledVector(dir, 0.3 + i * 0.35);
-      m.scale.setScalar(0.12);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, life: 1.4, max: 1.4, kind: 'smoke', grow: 0.5 + i * 0.15, vy: 0.4 });
-    }
+  stick(a, at, dir) {
+    a.mesh.position.copy(at).addScaledVector(dir, -0.25);
+    a.mesh.quaternion.setFromUnitVectors(UP, dir);
+    this.stuck.push({ mesh: a.mesh, life: 10 });
+    if (this.stuck.length > 70) this.scene.remove(this.stuck.shift().mesh);
   }
 
   spawnPuff(at, color, size, n) {
     for (let i = 0; i < n; i++) {
-      const m = new THREE.Mesh(this.fxGeo.puff, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false }));
+      const m = new THREE.Mesh(this.puffGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false }));
       m.position.copy(at);
       m.scale.setScalar(size * (0.5 + Math.random() * 0.5));
       this.scene.add(m);
       this.particles.push({
-        mesh: m, life: 0.4, max: 0.4, kind: 'puff',
+        mesh: m, life: 0.4, max: 0.4,
         v: new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 2.5, (Math.random() - 0.5) * 3),
       });
     }
@@ -626,21 +934,12 @@ export class Game {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.life -= dt;
-      const k = Math.max(0, p.life / p.max);
-      if (p.kind === 'smoke') {
-        p.mesh.scale.addScalar(p.grow * dt);
-        p.mesh.position.y += p.vy * dt;
-        p.mesh.material.opacity = 0.5 * k;
-      } else if (p.kind === 'puff') {
-        p.mesh.position.addScaledVector(p.v, dt);
-        p.v.y -= 9 * dt;
-        p.mesh.material.opacity = 0.8 * k;
-      } else if (p.kind === 'tracer') {
-        p.mesh.material.opacity = 0.55 * k;
-      }
+      p.mesh.position.addScaledVector(p.v, dt);
+      p.v.y -= 9 * dt;
+      p.mesh.material.opacity = 0.8 * Math.max(0, p.life / p.max);
       if (p.life <= 0) {
         this.scene.remove(p.mesh);
-        if (p.kind !== 'stuck' && p.kind !== 'tracer') p.mesh.material.dispose();
+        p.mesh.material.dispose();
         this.particles.splice(i, 1);
       }
     }
@@ -657,26 +956,26 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ camera
-  updateCamera(dt) {
+  updateCamera() {
     const p = this.player;
     if (!p || this.state === 'attract' || this.state === 'idle') {
       // filmische rondvlucht voor het hoofdmenu
-      const t = performance.now() / 1000 * 0.06;
-      this.camera.position.set(Math.sin(t) * 55, 22 + Math.sin(t * 2) * 4, Math.cos(t) * 55 - 5);
-      this.camera.lookAt(0, 3, 5);
+      const t = (performance.now() / 1000) * 0.05;
+      this.camera.position.set(Math.sin(t) * 62, 26 + Math.sin(t * 2) * 5, Math.cos(t) * 80);
+      this.camera.lookAt(0, 2, 0);
       return;
     }
     const yaw = p.yaw;
     const pitch = p.alive ? p.pitch : -0.4;
     const dir = dirFromAngles(yaw, pitch, _v1);
-    // schouder-camera: iets rechts van de speler
+    const side = p.mounted ? 0.6 : 0.85;
     const pivot = _v2.set(
-      p.pos.x - Math.cos(yaw) * 0.85,
+      p.pos.x - Math.cos(yaw) * side,
       p.pos.y + (p.alive ? 1.85 : 0.8),
-      p.pos.z + Math.sin(yaw) * 0.85,
+      p.pos.z + Math.sin(yaw) * side,
     );
     const back = _v3.copy(dir).negate();
-    const dist = p.alive ? CAM_DIST : 6;
+    const dist = !p.alive ? 6 : p.mounted ? 4.8 : 3.4;
     let t = this.rayObstacles(pivot, back, dist + 0.3);
     t = Math.min(dist, t === Infinity ? dist : t - 0.3);
     this.camera.position.copy(pivot).addScaledVector(back, Math.max(0.3, t));

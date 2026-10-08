@@ -1,14 +1,20 @@
 # Fetih 1453 ⚔️
 
-Een 3D-teamshooter voor **iOS en Android**: het **Ottomaanse Rijk** tegen het **Byzantijnse Rijk**
-tijdens de belegering van Constantinopel.
+Een 3D-actiegame voor **iOS en Android**: het **Ottomaanse Rijk** tegen het **Byzantijnse Rijk**
+tijdens de belegering van Constantinopel. Alleen wapens uit die tijd: boog en pijlen, zwaarden, schilden en paarden.
 
-- **Ottomanen** – janitsaren met rode kaftan en witte börk-muts, gewapend met een lontroer (snel vuur, 8 schoten).
-- **Byzantijnen** – soldaten met lamellair harnas, spitse helm, schild op de rug en een kruisboog (meer schade, 6 schoten).
+- **Ottomanen** – janitsaren (rode kaftan, witte börk-muts) met de Turkse reflexboog en de gebogen **kılıç**-sabel;
+  **sipahi**-ruiters te paard.
+- **Byzantijnen** – soldaten in lamellair harnas met spitse helm, boog en het rechte **spathion**-zwaard met rond
+  schild (vangt zwaardslagen van voren deels op); **kataphrakten** te paard.
 
-Je speelt 6 tegen 6 (jij + 5 AI-bondgenoten tegen 6 AI-vijanden). Het eerste team met **30 kills** wint.
-De slag gaat over een slagveld tussen het Ottomaanse legerkamp (tenten, bronzen kanonnen) en de
-Theodosiaanse muren met drie bressen.
+Elk team heeft een eigen **fort** met muren, ronde torens, een hoofdpoort en twee zijpoorten, een donjon,
+een stal met paarden en een blijde (trebuchet). Daartussen ligt het slagveld.
+Je speelt 8 tegen 8 (jij + 7 AI-strijders: boogschutters, voetvolk en ruiters). Het eerste team met **30 kills** wint.
+
+- Pijlen vliegen echt, in een boog door de zwaartekracht, en blijven steken in muren, bomen en paarden.
+- Je pijlkoker (24 pijlen) vult zich weer aan binnen je eigen fort.
+- Ruiters slaan harder in galop en vertrappen vijanden.
 
 ## Besturing
 
@@ -16,10 +22,12 @@ Theodosiaanse muren met drie bressen.
 | --- | --- |
 | Linkerkant slepen: lopen (ver duwen = sprinten) | WASD lopen, Shift sprinten |
 | Rechterkant slepen: richten | Muis richten |
-| **VUUR** ingedrukt houden (en slepen om te richten) | Linkermuisknop schieten |
-| ⟳ herladen, ▲ springen (op kratten!) | R herladen, Spatie springen, Esc pauze |
+| **AANVAL** ingedrukt houden (en slepen om te richten) | Linkermuisknop: schieten / slaan |
+| ⇄ boog ↔ zwaard | Q of muiswiel (1 = zwaard, 2 = boog) |
+| 🐎 op/af het paard (verschijnt bij een vrij paard) | E op/af het paard |
+| ▲ springen (op kratten!) | Spatie springen, Esc pauze |
 
-Kopschoten doen dubbele schade. Gezondheid herstelt na 7 seconden zonder schade.
+Kopschoten met de boog doen dubbele schade. Gezondheid herstelt na 7 seconden zonder schade.
 
 ## Techniek
 
@@ -30,13 +38,14 @@ Kopschoten doen dubbele schade. Gezondheid herstelt na 7 seconden zonder schade.
 ```
 src/
   main.js      menu's, opstarten, native instellingen (landschap, statusbalk)
-  game.js      game-loop, AI, schieten, physics, camera, effecten
-  soldier.js   3D-modellen van janitsaar en Byzantijnse soldaat + animaties
-  world.js     slagveld, muren van Constantinopel, kamp, dekking
+  game.js      game-loop, AI (boogschutters, voetvolk, ruiters), pijlen, zwaardgevecht, rijden, camera
+  soldier.js   3D-modellen van janitsaar en Byzantijnse soldaat, boog/zwaard/schild + animaties
+  horse.js     paarden met zadel en schabrak in teamkleuren, galop-animatie
+  world.js     slagveld, de twee forten, poorten, stal, dekking
   controls.js  joystick/touch + toetsenbord/muis
   hud.js       score, levensbalk, minimap, kill-feed
   audio.js     geluidseffecten
-  teams.js     wapens, teams en moeilijkheidsgraden
+  teams.js     wapens, rollen, teams en moeilijkheidsgraden
 ```
 
 ## Snelle demo (Windows/Mac/Linux)
