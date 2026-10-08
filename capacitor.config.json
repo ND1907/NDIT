@@ -1,0 +1,18 @@
+{
+  "appId": "com.ndit.fetih1453",
+  "appName": "Fetih 1453",
+  "webDir": "dist",
+  "backgroundColor": "#120c08",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": false
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": true
+    }
+  }
+}

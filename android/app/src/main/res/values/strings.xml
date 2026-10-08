@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Fetih 1453</string>
+    <string name="title_activity_main">Fetih 1453</string>
+    <string name="package_name">com.ndit.fetih1453</string>
+    <string name="custom_url_scheme">com.ndit.fetih1453</string>
+</resources>

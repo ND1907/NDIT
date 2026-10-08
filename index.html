@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#120c08" />
+    <title>Fetih 1453</title>
+    <link rel="icon" href="./icon.svg" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body data-team="ottoman">
+    <div id="game"></div>
+
+    <!-- ===== HUD ===== -->
+    <div id="hud" class="hidden">
+      <div id="scorebar">
+        <div class="team o"><span class="tname">Osmanlı</span><span id="score-o">0</span></div>
+        <div class="limit">tot 30</div>
+        <div class="team b"><span id="score-b">0</span><span class="tname">Bizans</span></div>
+      </div>
+      <canvas id="minimap" width="132" height="132"></canvas>
+      <div id="killfeed"></div>
+      <div id="kd">⚔ 0 ☠ 0</div>
+      <button id="btn-pause" aria-label="Pauze">❚❚</button>
+
+      <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+      <div id="hitmarker">✕</div>
+      <div id="dmg-dir"><div></div></div>
+      <div id="announce"></div>
+
+      <div id="status">
+        <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100</span></div>
+        <div id="ammo-box"><span id="weapon-name"></span><span id="ammo">8/8</span><span id="reload" class="hidden">HERLADEN…</span></div>
+      </div>
+
+      <div id="touch-zone"></div>
+      <div id="joy-base"><div id="joy-knob"></div></div>
+      <div id="buttons" class="touch-only">
+        <button id="btn-fire" aria-label="Vuur"><span>VUUR</span></button>
+        <button id="btn-jump" aria-label="Spring">▲</button>
+        <button id="btn-reload" aria-label="Herlaad">⟳</button>
+      </div>
+    </div>
+    <div id="vignette"></div>
+
+    <!-- ===== Dood ===== -->
+    <div id="death" class="hidden overlay-soft">
+      <h2>GESNEUVELD</h2>
+      <p id="death-text"></p>
+      <p id="death-timer"></p>
+    </div>
+
+    <!-- ===== Hoofdmenu ===== -->
+    <div id="menu" class="screen">
+      <div class="menu-inner">
+        <h1>FETIH <span>1453</span></h1>
+        <p class="sub">De belegering van Constantinopel · 3D teamshooter</p>
+        <div class="teams">
+          <button class="team-card o selected" data-team="ottoman">
+            <div class="emblem">☪</div>
+            <div class="tc-name">Ottomaanse Rijk</div>
+            <div class="tc-desc">Janitsaren · lontroer<br />snel vuur, 8 schoten</div>
+          </button>
+          <div class="vs">VS</div>
+          <button class="team-card b" data-team="byzantine">
+            <div class="emblem">☩</div>
+            <div class="tc-name">Byzantijnse Rijk</div>
+            <div class="tc-desc">Stadswacht · kruisboog<br />zware schade, 6 schoten</div>
+          </button>
+        </div>
+        <div class="diff">
+          <button data-diff="easy">Makkelijk</button>
+          <button data-diff="normal" class="selected">Normaal</button>
+          <button data-diff="hard">Moeilijk</button>
+        </div>
+        <button id="btn-play" class="big">TEN STRIJDE!</button>
+        <p class="help touch-only">Links slepen = lopen (ver duwen = sprinten) · Rechts slepen = richten · VUUR ingedrukt houden</p>
+        <p class="help desktop-only">WASD lopen · Shift sprint · Muis richten · Klik schieten · R herladen · Spatie springen · Esc pauze</p>
+      </div>
+    </div>
+
+    <!-- ===== Pauze ===== -->
+    <div id="pause" class="screen hidden">
+      <div class="menu-inner">
+        <h1>PAUZE</h1>
+        <button id="btn-resume" class="big">Verder spelen</button>
+        <div class="row">
+          <button id="btn-sound">Geluid: aan</button>
+          <button id="btn-sens">Gevoeligheid: normaal</button>
+        </div>
+        <button id="btn-quit">Terug naar menu</button>
+      </div>
+    </div>
+
+    <!-- ===== Einde ===== -->
+    <div id="gameover" class="screen hidden">
+      <div class="menu-inner">
+        <h1 id="over-title">OVERWINNING!</h1>
+        <div id="over-stats"></div>
+        <button id="btn-again" class="big">Nog een veldslag</button>
+        <button id="btn-menu">Hoofdmenu</button>
+      </div>
+    </div>
+
+    <div id="rotate-hint">↻ Draai je telefoon horizontaal</div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
