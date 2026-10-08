@@ -113,6 +113,17 @@ export class Controls {
     tap('btn-reload', () => (this.reloadPressed = true));
   }
 
+  // Muis vastzetten voor richten; als de browser dat weigert, valt de besturing terug op slepen.
+  lock() {
+    if (this.isTouch || this.noLock || !this.el.requestPointerLock) return;
+    try {
+      const r = this.el.requestPointerLock();
+      if (r && r.catch) r.catch(() => (this.noLock = true));
+    } catch (e) {
+      this.noLock = true;
+    }
+  }
+
   _setKnob(dx, dy) {
     this.joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
   }
@@ -131,19 +142,23 @@ export class Controls {
     });
 
     const canvasHost = this.el;
+    document.addEventListener('pointerlockerror', () => (this.noLock = true));
     canvasHost.addEventListener('mousedown', (e) => {
-      if (!this.enabled || e.button !== 0) return;
-      if (document.pointerLockElement !== canvasHost) {
-        canvasHost.requestPointerLock?.();
+      if (!this.enabled) return;
+      if (document.pointerLockElement !== canvasHost && !this.noLock) {
+        this.lock();
         return;
       }
-      this.firing = true;
+      if (e.button === 0) this.firing = true;
     });
+    canvasHost.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0 && !this.isTouch) this.firing = false;
     });
     document.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === canvasHost && this.enabled) {
+      if (!this.enabled) return;
+      // zonder pointer lock: richten door met ingedrukte muisknop te slepen
+      if (document.pointerLockElement === canvasHost || (this.noLock && e.buttons)) {
         this.look.x += e.movementX * 0.8;
         this.look.y += e.movementY * 0.8;
       }

@@ -39,6 +39,11 @@ src/
   teams.js     wapens, teams en moeilijkheidsgraden
 ```
 
+## Snelle demo (Windows/Mac/Linux)
+
+Open `demo/fetih-1453.html` met een dubbelklik: het hele spel zit in dat ene bestand en start in
+Chrome, Edge of Firefox, ook zonder internet. Opnieuw maken na wijzigingen: `npm run build:demo`.
+
 ## Starten
 
 Vereist Node.js 20+.

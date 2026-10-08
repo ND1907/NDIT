@@ -55,7 +55,7 @@ function play() {
   initAudio();
   show(null);
   game.start({ ...choice, withPlayer: true });
-  if (!controls.isTouch) $('touch-zone').requestPointerLock?.();
+  controls.lock();
 }
 
 $('btn-play').addEventListener('click', play);
@@ -72,7 +72,7 @@ $('btn-pause').addEventListener('pointerdown', (e) => {
 $('btn-resume').addEventListener('click', () => {
   show(null);
   game.pause(false);
-  if (!controls.isTouch) $('touch-zone').requestPointerLock?.();
+  controls.lock();
 });
 $('btn-quit').addEventListener('click', () => {
   show('menu');
@@ -117,3 +117,11 @@ overObserver.observe($('gameover'), { attributes: true, attributeFilter: ['class
 
 document.addEventListener('pointerdown', initAudio, { once: true });
 window.__game = game; // handig voor debuggen
+
+// Esc/P pauzeert ook als de muis niet vastgezet kon worden
+window.addEventListener('keydown', (e) => {
+  if ((e.code === 'Escape' || e.code === 'KeyP') && game.state === 'playing' && !document.pointerLockElement) {
+    game.pause(true);
+    show('pause');
+  }
+});
