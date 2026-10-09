@@ -266,6 +266,17 @@ export function unitThink(m, u) {
       ai.stuckT = 0;
     }
   } else ai.stuckT = 0;
+  // langdurig geen voortgang (bv. formatieplek achter bondgenoten): een tijd zelfstandig het veld volgen
+  if (!ai.wantMove || ai.target || u.post || Math.hypot(u.x - (ai.px ?? u.x), u.z - (ai.pz ?? u.z)) > 3 || ai.pt == null) {
+    ai.px = u.x;
+    ai.pz = u.z;
+    ai.pt = m.time;
+  } else if (m.time - ai.pt > 12) {
+    ai.soloT = m.time + 20;
+    ai.unstickT = 1.2;
+    ai.unstickDir = m.rng() * Math.PI * 2;
+    ai.pt = m.time;
+  }
 
   const w0 = u.weapons[0];
   const ranged = RANGED_ROLES.has(u.role) || (u.role === 'guard' && w0.kind === 'ranged');
@@ -427,6 +438,12 @@ export function unitSteer(m, u, dt) {
       const a = L.yaw + Math.PI + (k - 1.5) * 0.9;
       const gx = L.x + Math.sin(a) * 2.6;
       const gz = L.z + Math.cos(a) * 2.6;
+      // staat de leider stil en zijn we dichtbij, dan blijven we staan (geen geschuifel tegen muren)
+      if (Math.hypot(L.vx || 0, L.vz || 0) < 0.5 && Math.hypot(L.x - u.x, L.z - u.z) < 4.5) {
+        move(u, 0, 0, 0);
+        u.yaw += clamp(angleDiff(u.yaw, L.yaw), -2 * dt, 2 * dt);
+        return;
+      }
       seek(m, u, gx, gz, sp * (L.mounted ? 1.4 : 1), dt, 0.8, order, L.team);
       return;
     }
@@ -691,8 +708,8 @@ function orderMove(m, u, dt, sp, order) {
       return;
     }
     const d = m.nav.distAt(field, u.x, u.z);
-    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'capture' || order.kind === 'keep';
-    if (hold && d < 6) return; // aangekomen
+    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'capture' || order.kind === 'keep' || order.kind === 'guard';
+    if (hold && d < (order.kind === 'guard' || order.kind === 'keep' ? 9 : 6)) return; // aangekomen
     if (d >= NAV_INF) return;
     if (m.nav.dirAt(field, u.x, u.z, tmpDir) && (tmpDir.x || tmpDir.z)) {
       move(u, tmpDir.x, tmpDir.z, speed);
@@ -708,7 +725,7 @@ function orderMove(m, u, dt, sp, order) {
   const tx = anchor.x + c * ox + s * oz;
   const tz = anchor.z - s * ox + c * oz;
   const d = Math.hypot(tx - u.x, tz - u.z);
-  if (d > 14 || m.nav.blocked[m.nav.idx(tx, tz)] || !m.nav.clearLine(u.x, u.z, tx, tz)) {
+  if (d > 14 || (ai.soloT || 0) > m.time || m.nav.blocked[m.nav.idx(tx, tz)] || !m.nav.clearLine(u.x, u.z, tx, tz)) {
     // plek niet direct bereikbaar: zelf het veld van de order volgen
     const field = fieldForOrder(m, u, order);
     if (field && m.nav.dirAt(field, u.x, u.z, tmpDir) && (tmpDir.x || tmpDir.z)) {

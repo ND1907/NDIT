@@ -47,6 +47,14 @@ export class Match {
     if (allis.size < 2) for (const t of this.teams) t.alliance = t.id;
     this.teamById = Object.fromEntries(this.teams.map((t) => [t.id, t]));
     this.allianceOf = (teamId) => this.teamById[teamId].alliance;
+    // kleinere allianties krijgen meer troepen en inkomen, zodat 1 tegen 2 nog een eerlijk gevecht is
+    const allySize = {};
+    for (const t of this.teams) allySize[t.alliance] = (allySize[t.alliance] || 0) + 1;
+    const maxSize = Math.max(...Object.values(allySize));
+    for (const t of this.teams) {
+      t.boost = Math.min(1.8, Math.pow(maxSize / allySize[t.alliance], 0.8));
+      t.cap = Math.round(this.cap * t.boost);
+    }
 
     this.map = generateMap(s.teams, { seed: s.seed ?? 1453, structHp: this.length.structHp });
     this.teams.forEach((t, i) => (t.fort = this.map.forts[i]));
@@ -105,7 +113,7 @@ export class Match {
   _spawnInitial() {
     for (const t of this.teams) {
       this.spawnLeader(t);
-      const n = Math.round(this.cap * 0.7);
+      const n = Math.round(t.cap * 0.7);
       this.recruit(t, n, true);
     }
     if (this.settings.withPlayer !== false && this.settings.playerTeam) this.spawnPlayer();
@@ -1016,18 +1024,18 @@ export class Match {
       const owned = this.map.capturePoints.filter((c) => c.owner === t.id).length;
       // inkomen schaalt mee met de legergrootte (±3,3 man-punten/s bij 60 per team)
       const scale = this.cap / 60;
-      let inc = (3.3 * t.faction.incomeMult * this.length.income + owned * 0.5) * scale;
+      let inc = (3.3 * t.faction.incomeMult * this.length.income + owned * 0.5) * scale * t.boost;
       // laatste verdediging: een fort met een bres krijgt eerst extra rekruten, daarna raakt het uitgeput
       if (t.fort.breached) inc *= this.time - t.fort.breachedAt < 240 ? 1.35 : 0.8;
       const playerSide = this.player && this.allianceOf(this.player.team) === t.alliance;
       if (!playerSide && this.settings.withPlayer !== false) inc *= this.diff.enemyIncome;
-      t.manpower = Math.min(t.manpower + inc * dt, 400 * scale);
+      t.manpower = Math.min(t.manpower + inc * dt, 400 * scale * t.boost);
       t.waveT -= dt;
       if (t.waveT <= 0) {
         t.waveT = t.fort.breached || this.commanders[t.index].inside > 0 ? WAVE_INTERVAL * 0.6 : WAVE_INTERVAL;
-        const free = this.cap - t.units;
+        const free = t.cap - t.units;
         if (free >= 3) {
-          const n = this.recruit(t, Math.min(free, 16));
+          const n = this.recruit(t, Math.min(free, Math.round(16 * t.boost)));
           if (n > 0) {
             t.waveN++;
             this.events.push({ t: 'wave', team: t.id, n });

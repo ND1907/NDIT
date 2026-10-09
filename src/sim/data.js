@@ -174,7 +174,7 @@ export const FACTIONS = {
   },
   byzantine: {
     id: 'byzantine', name: 'Byzantijnse Rijk', short: 'Byzantijnen', color: '#5b1a7a', color2: '#d4a72c', ui: '#a35ad6', side: 'christian',
-    fortStyle: 'byzantine', incomeMult: 0.9,
+    fortStyle: 'byzantine', incomeMult: 1.0,
     style: 'Verdedigers: dubbele Theodosiaanse muren met gracht, Grieks vuur en zware kataphrakten.',
     roster: ['byz_skoutatos', 'byz_toxotes', 'byz_siphon', 'byz_kataphrakt'],
     mix: { byz_skoutatos: 0.42, byz_toxotes: 0.33, byz_siphon: 0.1, byz_kataphrakt: 0.15 },
@@ -182,7 +182,7 @@ export const FACTIONS = {
   },
   genoa: {
     id: 'genoa', name: 'Republiek Genua', short: 'Genuezen', color: '#c8102e', color2: '#f2f0ea', ui: '#ff6b6b', side: 'christian',
-    fortStyle: 'genoa', incomeMult: 0.8,
+    fortStyle: 'genoa', incomeMult: 0.72,
     style: 'Beroemde kruisboogschutters achter pavese-schilden en zwaar gepantserde men-at-arms.',
     roster: ['gen_balestriere', 'gen_lanciere', 'gen_armigero'],
     mix: { gen_balestriere: 0.42, gen_lanciere: 0.33, gen_armigero: 0.25 },
@@ -198,7 +198,7 @@ export const FACTIONS = {
   },
   serbia: {
     id: 'serbia', name: 'Servisch Despotaat', short: 'Serviërs', color: '#9b1c1c', color2: '#f4f1ea', ui: '#ff8f70', side: 'ottoman',
-    fortStyle: 'serbia', incomeMult: 1.3,
+    fortStyle: 'serbia', incomeMult: 1.45,
     style: 'Sterke lansruiters en de mijnwerkers van Novo Brdo die muren ondergraven.',
     roster: ['srb_lancer', 'srb_pesak', 'srb_strelac', 'srb_miner'],
     mix: { srb_pesak: 0.38, srb_strelac: 0.27, srb_lancer: 0.25, srb_miner: 0.1 },
@@ -206,7 +206,7 @@ export const FACTIONS = {
   },
   hungary: {
     id: 'hungary', name: 'Koninkrijk Hongarije', short: 'Hongaren', color: '#1d5a32', color2: '#c8102e', ui: '#5fcf7f', side: 'christian',
-    fortStyle: 'hungary', incomeMult: 1.32,
+    fortStyle: 'hungary', incomeMult: 1.26,
     style: 'Zware ridders, lichte ruiters, piekeniers, kruisboog- en haakbusschutters (naar Hussitisch voorbeeld).',
     roster: ['hun_knight', 'hun_light', 'hun_pike', 'hun_crossbow', 'hun_puskas'],
     mix: { hun_pike: 0.3, hun_crossbow: 0.2, hun_puskas: 0.16, hun_light: 0.18, hun_knight: 0.16 },

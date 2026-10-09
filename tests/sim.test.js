@@ -269,5 +269,20 @@ describe('rekrutering', () => {
         expect(m.player).toBeTruthy();
       }
     }
+  }, 30000);
+});
+
+describe('allianties', () => {
+  it('een kleinere alliantie krijgt meer troepen', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine', 'genoa'], mode: 'historical', troops: 'small', length: 'short', seed: 3, withPlayer: false });
+    const ott = m.teamById.ottoman;
+    const byz = m.teamById.byzantine;
+    expect(ott.alliance).not.toBe(byz.alliance);
+    expect(ott.cap).toBeGreaterThan(byz.cap);
+    expect(byz.boost).toBe(1);
+  });
+  it('vrij-voor-allen geeft iedereen dezelfde omvang', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine', 'genoa'], mode: 'ffa', troops: 'small', length: 'short', seed: 3, withPlayer: false });
+    expect(new Set(m.teams.map((t) => t.cap)).size).toBe(1);
   });
 });

@@ -11,7 +11,7 @@ if (process.argv[2] === '--child') {
   process.on('message', (job) => {
     try {
       const r = runMatch(job);
-      process.send({ ok: true, job, r: { minutes: r.minutes, winner: r.winner, reason: r.reason, stuckNow: r.stuckNow, maxStuckS: r.maxStuckS, avgTickMs: r.avgTickMs, worstTickMs: r.worstTickMs, log: r.log.filter((l) => /phase|fortFallen|end/.test(l)), teams: r.summary.teams.map((t) => ({ id: t.id, alive: t.alive, k: t.kills, l: t.losses, fort: t.fortHp, el: t.eliminatedAt && Math.round(t.eliminatedAt / 60) })) } });
+      process.send({ ok: true, job, r: { minutes: r.minutes, winner: r.winner, reason: r.reason, stuckNow: r.stuckNow, maxStuckS: r.maxStuckS, worstStuck: r.worstStuck, avgTickMs: r.avgTickMs, worstTickMs: r.worstTickMs, log: r.log.filter((l) => /phase|fortFallen|end/.test(l)), teams: r.summary.teams.map((t) => ({ id: t.id, alive: t.alive, k: t.kills, l: t.losses, fort: t.fortHp, el: t.eliminatedAt && Math.round(t.eliminatedAt / 60) })) } });
     } catch (e) {
       process.send({ ok: false, job, err: String(e.stack || e) });
     }
@@ -59,6 +59,7 @@ if (process.argv[2] === '--child') {
         if (msg.ok) {
           const r = msg.r;
           console.log(`${j.teams.join('+').padEnd(48)} ${j.mode.padEnd(10)} s${j.seed}  ${String(r.minutes).padStart(5)} min  winnaar=${String(r.winner).padEnd(10)} (${r.reason})  vast=${r.stuckNow}/${r.maxStuckS}s  tick=${r.avgTickMs}ms  ` + r.teams.map((t) => `${t.id.slice(0, 3)}:${t.alive ? 'J' : 'x' + t.el}/k${t.k}/f${t.fort}`).join(' '));
+          if (r.maxStuckS > 120) console.log('    langst vast:', r.worstStuck);
         } else console.log('FOUT', j.teams.join('+'), msg.err);
         feed();
       });

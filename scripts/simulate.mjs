@@ -24,6 +24,7 @@ export function runMatch(opts) {
   let ticks = 0;
   const stuck = new Map();
   let maxStuck = 0;
+  let worstStuck = '';
   const t0 = Date.now();
   while (!m.over && m.time < maxT) {
     const a = performance.now();
@@ -51,7 +52,11 @@ export function runMatch(opts) {
         const want = u.ai.wantMove;
         if (!prev) stuck.set(u, { x: u.x, z: u.z, t: m.time });
         else if (Math.hypot(u.x - prev.x, u.z - prev.z) > 3 || !want) stuck.set(u, { x: u.x, z: u.z, t: m.time });
-        else maxStuck = Math.max(maxStuck, m.time - prev.t);
+        else if (m.time - prev.t > maxStuck) {
+          maxStuck = m.time - prev.t;
+          const o = u.squad?.order;
+          worstStuck = `${u.team}/${u.typeId} order=${o?.kind}${o?.team ? ':' + o.team : ''} pos=(${u.x.toFixed(0)},${u.z.toFixed(0)}) blk=${u.blockedBy?.kind || '-'} tgt=${u.ai.target ? u.ai.target.typeId : '-'} struct=${u.ai.struct?.kind || '-'} anchor=${u.squad?.members[0] === u} dock=${!!u.ai.dockSt} mounted=${!!u.mounted}`;
+        }
       }
     }
     if (opts.progress && ticks % (30 * 60) === 0) {
@@ -68,7 +73,7 @@ export function runMatch(opts) {
   return {
     teams: opts.teams.join('+'), seed: opts.seed, minutes: +(m.time / 60).toFixed(1), winner: m.winner, reason: m.winReason,
     avgTickMs: +(tickMs / ticks).toFixed(2), worstTickMs: +worst.toFixed(1), units: m.units.filter((u) => u.alive).length,
-    stuckNow, maxStuckS: Math.round(maxStuck), wall: ((Date.now() - t0) / 1000).toFixed(0) + 's', log, counts, summary: m.summary(),
+    stuckNow, maxStuckS: Math.round(maxStuck), worstStuck, wall: ((Date.now() - t0) / 1000).toFixed(0) + 's', log, counts, summary: m.summary(),
   };
 }
 
