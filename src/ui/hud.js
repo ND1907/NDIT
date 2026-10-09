@@ -37,10 +37,12 @@ export class Hud {
     // teambalk
     const T = this.el.teams;
     T.innerHTML = '';
+    T.classList.toggle('many', match.teams.length >= 5);
     this.teamEls = match.teams.map((t) => {
       const d = document.createElement('div');
       d.className = 'tm';
-      d.innerHTML = `<div class="tn"><img alt="" src="${flagDataURL(t.id, 44, 28)}"><span>${FACTIONS[t.id].short}</span></div><span class="tl" title="Leider">👑</span><div class="bars"><div class="bar" title="Fort"><i></i></div><div class="bar cap hidden" title="Inname donjon"><i></i></div></div><span class="cnt" style="grid-column:1/3"></span>`;
+      d.title = FACTIONS[t.id].name;
+      d.innerHTML = `<div class="tn"><img alt="" src="${flagDataURL(t.id, 44, 28)}"><span class="tname">${FACTIONS[t.id].short}</span></div><span class="tl" title="Leider">👑</span><div class="bars"><div class="bar" title="Fort"><i></i></div><div class="bar cap hidden" title="Inname donjon"><i></i></div></div><span class="cnt" style="grid-column:1/3"></span>`;
       T.appendChild(d);
       return { d, fort: d.querySelector('.bar i'), cap: d.querySelector('.bar.cap'), capI: d.querySelector('.bar.cap i'), cnt: d.querySelector('.cnt'), lead: d.querySelector('.tl') };
     });

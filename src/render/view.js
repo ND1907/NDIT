@@ -101,7 +101,7 @@ export class GameView {
     this.world = new WorldView(this.scene, match.map, match, this.quality);
     this.fx = new FxView(this.scene, this.quality);
     this.fx.syncFog(this.scene.fog);
-    const cap = Math.max(400, match.cap * match.teams.length * 1.6 + 120);
+    const cap = Math.max(400, match.teams.reduce((a, t) => a + (t.cap || match.cap), 0) * 1.6 + 120);
     this.humans = new CrowdRenderer(this.scene, { nb: HUMAN_NB, capacity: Math.round(cap), quality: this.quality, name: 'mens' });
     this.horses = new CrowdRenderer(this.scene, { nb: HORSE_NB, capacity: Math.round(cap * 0.5), quality: this.quality, name: 'paard' });
     this.siege = new CrowdRenderer(this.scene, { nb: SIEGE_NB, capacity: 64, quality: this.quality, name: 'tuig' });
@@ -177,6 +177,9 @@ export class GameView {
   // ------------------------------------------------------------------ per frame
   render(dt, time) {
     const m = this.match;
+    // ook draaien van het toestel opvangen als er geen resize-event komt
+    const c = this.renderer.domElement;
+    if (c.width !== Math.floor(window.innerWidth * this.renderer.getPixelRatio()) || c.height !== Math.floor(window.innerHeight * this.renderer.getPixelRatio())) this.resize();
     if (!m) {
       this.renderer.render(this.scene, this.camera);
       return;
@@ -222,6 +225,8 @@ export class GameView {
         continue;
       }
       const key = u.def.id + (u.banner ? '+vaandel' : '');
+      // camera tegen een muur gedrukt: eigen poppetje niet tekenen, anders zie je alleen de binnenkant van het hoofd
+      if (u.isPlayer && u.alive && this.hidePlayer) continue;
       H.add(key, d, u);
       if (u.mounted) P.add('paard:' + u.def.faction, d, u);
     }
@@ -318,6 +323,7 @@ export class GameView {
     let d = hit ? Math.max(0.4, hit.t - 0.35) : dist;
     if (pivot.y + back.y * d < 0.3) d = Math.max(0.4, (pivot.y - 0.3) / Math.max(0.01, -back.y));
     cam.position.copy(pivot).addScaledVector(back, d);
+    this.hidePlayer = d < (p.mounted ? 2.2 : 1.5);
     cam.lookAt(pivot.clone().addScaledVector(dir, 30));
     this.focus = (this.focus || new THREE.Vector3()).set(tx, 0, tz);
     this.camDir = dir;
