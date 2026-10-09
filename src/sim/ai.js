@@ -5,6 +5,7 @@
 //     ruiters chargeren, speren zetten zich schrap, mijnwerkers ondergraven muren...).
 import { angleDiff, clamp } from './math.js';
 import { toLocal } from './geom.js';
+import { regionOf } from './map.js';
 import { NAV_INF } from './nav.js';
 
 const tmpDir = { x: 0, z: 0, d: 0 };
@@ -25,6 +26,7 @@ export class Commander {
     this.musterT = 0;
     this.threat = 0;
     this.leaderMode = 'defend';
+    this.waves = 0;
   }
 
   update(dt) {
@@ -38,11 +40,16 @@ export class Commander {
 
     // dreiging bij het eigen fort
     let threat = 0;
+    let inside = 0;
     m.unitGrid.query(fort.cx, fort.cz, fort.extent + 40, (u) => {
-      if (u.alliance !== t.alliance) threat += u.siege ? 6 : 1;
+      if (u.alliance !== t.alliance) {
+        threat += u.siege ? 6 : 1;
+        if (regionOf(m.map, u.x, u.z) === t.id || Math.hypot(u.x - fort.keep.x, u.z - fort.keep.z) < 26) inside++;
+      }
       return false;
     });
     this.threat = threat;
+    this.inside = inside;
 
     // doelwit kiezen: dichtstbijzijnde vijandelijke fort, met voorkeur voor verzwakte forten
     const enemies = m.teams.filter((o) => o.alive && o.alliance !== t.alliance);
@@ -73,9 +80,18 @@ export class Commander {
 
     // ---- muurposten voor schutters ----
     const freePosts = fort.posts.filter((p) => !p.struct.destroyed).length;
-    let postWanted = Math.min(freePosts, Math.round(ownUnits * (0.18 + Math.min(0.25, threat / 80))));
+    let postWanted = Math.min(freePosts, Math.round(ownUnits * (0.12 + Math.min(0.2, threat / 80))));
     // ---- verdedigingsaandeel ----
-    let defendShare = clamp(0.18 + threat / Math.max(20, ownUnits * 1.2), 0.15, 0.75);
+    let defendShare = clamp(0.1 + threat / Math.max(20, ownUnits * 1.2), 0.1, 0.7);
+    // eindfase: alles op alles
+    const late = m.time > m.length.timeLimit * 0.5;
+    if (late) {
+      defendShare = Math.min(defendShare, 0.18);
+      postWanted = Math.min(postWanted, Math.round(ownUnits * 0.08));
+      this.attackGo = true;
+    }
+    // vijandelijk fort heeft een bres: doorstoten
+    if (target.fort.breached && !fort.breached) defendShare = Math.min(defendShare, 0.2);
     if (fort.breached) defendShare = Math.max(defendShare, 0.35);
     const defendWanted = Math.round(ownUnits * defendShare);
 
@@ -85,21 +101,35 @@ export class Commander {
 
     let posted = 0;
     let defending = 0;
+    let spotIdx = Math.floor(m.rng() * 10);
     const capturers = new Map();
     for (const s of field) {
       const role = s.type.role;
       const n = s.members.length;
       // schutters naar de muren
+      // vijand binnen de muren: iedereen in de buurt naar de donjon
+      if (inside > 0 && dist(s) < fort.extent + 25 && s.order.kind !== 'keep') {
+        s.order = { kind: 'keep', since: m.time };
+        defending += n;
+        continue;
+      }
+      if (s.order.kind === 'keep') {
+        if (inside > 0 || m.time - s.order.since < 20) {
+          defending += n;
+          continue;
+        }
+      }
       if (RANGED_ROLES.has(role) || role === 'fire') {
-        if (posted < postWanted && (s.order.kind === 'posts' || s.order.kind === 'rally' || s.order.kind === 'defend')) {
-          s.order = { kind: 'posts' };
+        const keepPost = s.order.kind === 'posts' && m.time - (s.order.since || 0) < 40 && posted < postWanted * 1.3;
+        if (keepPost || (posted < postWanted && (s.order.kind === 'rally' || s.order.kind === 'defend'))) {
+          if (s.order.kind !== 'posts') s.order = { kind: 'posts', since: m.time };
           posted += n;
           continue;
         }
       }
       if (defending < defendWanted && role !== 'cavalry' && role !== 'sapper') {
         if (s.order.kind !== 'attack' || dist(s) < fort.extent + 30 || threat > ownUnits * 0.5) {
-          s.order = { kind: 'defend' };
+          if (s.order.kind !== 'defend') s.order = { kind: 'defend', spot: spotIdx++ % fort.defendSpots.length };
           defending += n;
           continue;
         }
@@ -109,13 +139,15 @@ export class Commander {
         .filter((c) => !c.owner || m.allianceOf(c.owner) !== t.alliance)
         .sort((a, b) => Math.hypot(a.x - fort.cx, a.z - fort.cz) - Math.hypot(b.x - fort.cx, b.z - fort.cz));
       const cp = cps.find((c) => (capturers.get(c.id) || 0) < 1);
-      if (cp && (role === 'cavalry' || (role === 'spear' && m.rng() < 0.5)) && s.order.kind !== 'attack') {
+      if (cp && !this.attackGo && (role === 'cavalry' || (role === 'spear' && m.rng() < 0.5)) && s.order.kind !== 'attack') {
         s.order = { kind: 'capture', cp: cp.id };
         capturers.set(cp.id, (capturers.get(cp.id) || 0) + 1);
         continue;
       }
-      if (role === 'cavalry' && m.rng() < tactics * 0.6 && s.order.kind !== 'attack') {
-        s.order = { kind: 'raid', team: target.id };
+      if (role === 'cavalry' && s.order.kind !== 'attack') {
+        // ruiters: rooftochten op het veld, en flankeren zodra de aanval loopt
+        if (this.attackGo || m.rng() < tactics * 0.6) s.order = { kind: 'raid', team: target.id };
+        else s.order = { kind: 'rally', since: s.order.since ?? m.time };
         continue;
       }
       // aanvalsgroep: eerst verzamelen bij het verzamelpunt
@@ -126,15 +158,18 @@ export class Commander {
     // aanval starten als er genoeg verzameld is (of te lang gewacht)
     const rallying = field.filter((s) => s.order.kind === 'rally');
     const rallyCount = rallying.reduce((a, s) => a + s.members.length, 0);
-    if (!this.attackGo) {
+    const siegeReady = squads.some((s) => s.order.kind === 'siege');
+    const firstWave = this.waves === 0 && !(siegeReady || m.time > 180) && !target.fort.breached;
+    if (!this.attackGo && !firstWave) {
       this.musterT += 2;
       if (rallyCount >= Math.max(8, m.cap * 0.32) || (this.musterT > 75 && rallyCount >= 6)) {
+        this.waves++;
         this.attackGo = true;
         this.musterT = 0;
         for (const s of rallying) s.order = { kind: 'attack', team: target.id };
         m.events.push({ t: 'attackWave', team: t.id, target: target.id });
       }
-    } else {
+    } else if (!late) {
       const attacking = field.filter((s) => s.order.kind === 'attack').reduce((a, s) => a + s.members.length, 0);
       if (attacking < Math.max(4, m.cap * 0.1)) this.attackGo = false;
     }
@@ -241,7 +276,7 @@ export function unitThink(m, u) {
   else if (u.role === 'cavalry') senseR = order.kind === 'raid' ? 55 : 35;
   else if (u.role === 'sapper') senseR = 6;
   else if (u.role === 'fire') senseR = 22;
-  else senseR = order.kind === 'defend' ? 32 : 22;
+  else senseR = order.kind === 'defend' || order.kind === 'keep' ? 32 : 22;
   if (u.role === 'leader') senseR = 18;
 
   // houd het huidige doel vast zolang het bereikbaar is
@@ -276,7 +311,10 @@ export function unitThink(m, u) {
 
   // muurposten
   if (order.kind === 'posts' && !u.post && !u.climb && !t) {
-    if (!ai.post || ai.post.occupant || ai.post.struct.destroyed) ai.post = m.nearestFreePost(u, 200);
+    if (!ai.post || ai.post.occupant || ai.post.struct.destroyed) {
+      ai.post = m.nearestFreePost(u, 200);
+      if (ai.post) ai.post.reserved = u;
+    }
     if (ai.post && Math.hypot(ai.post.footX - u.x, ai.post.footZ - u.z) < 1.8) {
       m.takePost(u, ai.post);
       ai.post = null;
@@ -561,6 +599,7 @@ function fieldForOrder(m, u, order) {
     case 'raid': return m.field('keep:' + order.team, u.alliance);
     case 'capture': return m.field('cp:' + order.cp, u.alliance);
     case 'rally': return m.field('rally:' + u.team, u.alliance);
+    case 'keep': return m.field('keep:' + u.team, u.alliance);
     default: return m.field('home:' + u.team, u.alliance);
   }
 }
@@ -578,6 +617,7 @@ function goalOf(m, u, order) {
       return [c.x, c.z];
     }
     case 'rally': return [t.fort.rally.x, t.fort.rally.z];
+    case 'keep': return [t.fort.keep.x, t.fort.keep.z];
     default: return [t.fort.inside.x, t.fort.inside.z];
   }
 }
@@ -602,12 +642,34 @@ function slotOffset(u, k) {
 function orderMove(m, u, dt, sp, order) {
   const sq = u.squad;
   const ai = u.ai;
-  if (order.kind === 'posts' && ai.post) {
-    seek(m, u, ai.post.footX, ai.post.footZ, sp, dt, 0.4, { kind: 'defend' }, u.team);
+  if (order.kind === 'posts') {
+    if (ai.post) {
+      seek(m, u, ai.post.footX, ai.post.footZ, sp, dt, 0.4, { kind: 'defend' }, u.team);
+      return;
+    }
+    // geen vrije post: als verdediger achter de poort blijven
+    const f = m.teamById[u.team].fort;
+    const spot = f.defendSpots[(u.id * 7) % f.defendSpots.length];
+    seek(m, u, spot.x + ((u.id % 5) - 2) * 1.6, spot.z + ((u.id % 3) - 1) * 1.6, sp * 0.7, dt, 1.2, { kind: 'defend' }, u.team);
     return;
   }
-  // de eerste levende eenheid is het anker van de squad
-  const anchor = sq ? sq.members[0] : u;
+  if (order.kind === 'defend' && order.spot != null) {
+    // eigen plek in het fort, iedereen op een vaste plaats rond die plek
+    const f = m.teamById[u.team].fort;
+    const spot = f.defendSpots[order.spot % f.defendSpots.length];
+    const k = sq ? sq.members.indexOf(u) : 0;
+    const [ox, oz] = slotOffset(u, Math.max(0, k));
+    const c = Math.cos(f.rot);
+    const s2 = Math.sin(f.rot);
+    const tx = spot.x + c * ox + s2 * oz;
+    const tz = spot.z - s2 * ox + c * oz;
+    if (Math.hypot(tx - u.x, tz - u.z) > 0.8) seek(m, u, tx, tz, sp * 0.8, dt, 0.6, { kind: 'defend' }, u.team);
+    else u.yaw += clamp(angleDiff(u.yaw, f.rot), -3 * dt, 3 * dt);
+    return;
+  }
+  // de eerste levende eenheid (niet op de muur) is het anker van de squad
+  let anchor = sq ? sq.members[0] : u;
+  if (anchor && (anchor.post || anchor.climb)) anchor = sq.members.find((x) => !x.post && !x.climb) || u;
   if (anchor === u || !sq) {
     const field = fieldForOrder(m, u, order);
     let speed = sp * (order.kind === 'attack' || order.kind === 'raid' ? 0.8 : 0.7);
@@ -629,7 +691,7 @@ function orderMove(m, u, dt, sp, order) {
       return;
     }
     const d = m.nav.distAt(field, u.x, u.z);
-    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'capture';
+    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'capture' || order.kind === 'keep';
     if (hold && d < 6) return; // aangekomen
     if (d >= NAV_INF) return;
     if (m.nav.dirAt(field, u.x, u.z, tmpDir) && (tmpDir.x || tmpDir.z)) {

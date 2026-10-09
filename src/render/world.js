@@ -110,8 +110,40 @@ export class WorldView {
   _terrain() {
     const R = this.map.radius;
     const size = R * 4;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size), this.mats.grass);
-    ground.rotation.x = -Math.PI / 2;
+    // grote kleurvlakken (droog/vers/vertrapt) tegen zichtbare textuurherhaling
+    const gg = new THREE.PlaneGeometry(size, size, 160, 160);
+    gg.rotateX(-Math.PI / 2);
+    const pos = gg.attributes.position;
+    const col = new Float32Array(pos.count * 3);
+    const n2 = (x, z) => Math.sin(x * 0.021 + Math.sin(z * 0.013) * 2) * Math.cos(z * 0.017 - Math.sin(x * 0.011) * 1.5);
+    const forts = this.map.forts;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const a = n2(x, z) * 0.5 + n2(x * 2.3 + 40, z * 2.1 - 17) * 0.3 + n2(x * 5.1, z * 4.7) * 0.15;
+      let r = 0.95 + a * 0.12;
+      let g = 0.97 + a * 0.08;
+      let b = 0.9 + a * 0.06;
+      // droog, geel gras op sommige plekken
+      const dry = Math.max(0, n2(x * 0.7 + 90, z * 0.8 - 30));
+      r += dry * 0.18;
+      g += dry * 0.06;
+      b -= dry * 0.08;
+      // vertrapte aarde rond de forten
+      for (const f of forts) {
+        const d = Math.hypot(x - f.cx, z - f.cz);
+        const k = Math.max(0, 1 - Math.abs(d - f.extent - 8) / 14) * 0.35;
+        r -= k * 0.05;
+        g -= k * 0.22;
+        b -= k * 0.18;
+      }
+      col[i * 3] = r;
+      col[i * 3 + 1] = g;
+      col[i * 3 + 2] = b;
+    }
+    gg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    this.mats.grass.vertexColors = true;
+    const ground = new THREE.Mesh(gg, this.mats.grass);
     ground.receiveShadow = this.shadows;
     ground.material.map.repeat.set(size / 9, size / 9);
     this.group.add(ground);
@@ -277,7 +309,7 @@ export class WorldView {
 
   _capturePoints() {
     this.cpFlags = [];
-    const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.35, depthWrite: false });
+    const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.18, depthWrite: false });
     for (const c of this.map.capturePoints) {
       const g = new THREE.Group();
       g.position.set(c.x, 0, c.z);
@@ -288,7 +320,7 @@ export class WorldView {
       const base = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 0.6, 10), this.mats.stone.byzantine);
       base.position.y = 0.3;
       g.add(base);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(c.r - 0.4, c.r, 48), ringMat.clone());
+      const ring = new THREE.Mesh(new THREE.RingGeometry(c.r - 0.25, c.r, 48), ringMat.clone());
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.05;
       g.add(ring);

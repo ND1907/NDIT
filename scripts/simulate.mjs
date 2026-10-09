@@ -59,7 +59,12 @@ export function runMatch(opts) {
       console.log(`  t=${(m.time / 60).toFixed(0)}m ${alive}`);
     }
   }
-  const stuckNow = [...stuck.entries()].filter(([u, s]) => u.alive && m.time - s.t > 20).length;
+  const stuckList = [...stuck.entries()].filter(([u, s]) => u.alive && m.time - s.t > 20);
+  const stuckNow = stuckList.length;
+  if (opts.showStuck) for (const [u, s] of stuckList) {
+    const o = u.squad?.order;
+    console.log(`  VAST ${Math.round(m.time - s.t)}s ${u.team}/${u.typeId} order=${o?.kind}${o?.team ? ':' + o.team : ''} pos=(${u.x.toFixed(1)},${u.z.toFixed(1)}) dv=(${(u.dvx || 0).toFixed(1)},${(u.dvz || 0).toFixed(1)}) blk=${u.blockedBy?.kind || '-'} tgt=${u.ai.target ? u.ai.target.typeId : '-'} struct=${u.ai.struct?.kind || '-'} anchor=${u.squad?.members[0] === u} dock=${!!u.ai.dockSt}`);
+  }
   return {
     teams: opts.teams.join('+'), seed: opts.seed, minutes: +(m.time / 60).toFixed(1), winner: m.winner, reason: m.winReason,
     avgTickMs: +(tickMs / ticks).toFixed(2), worstTickMs: +worst.toFixed(1), units: m.units.filter((u) => u.alive).length,
@@ -70,7 +75,7 @@ export function runMatch(opts) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const r = runMatch({
     teams: (args.teams || 'ottoman,byzantine').split(','), troops: args.troops, length: args.length, mode: args.mode,
-    seed: +(args.seed || 1), max: args.max ? +args.max : undefined, progress: !args.quiet, difficulty: args.difficulty,
+    seed: +(args.seed || 1), max: args.max ? +args.max : undefined, progress: !args.quiet, difficulty: args.difficulty, showStuck: true,
   });
   if (!args.quiet) for (const l of r.log) console.log('   ', l);
   const { log, counts, summary, ...rest } = r;

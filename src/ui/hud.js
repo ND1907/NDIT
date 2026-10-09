@@ -350,6 +350,10 @@ export class Hud {
           this.announce(PHASES[e.n], e.n === 2 ? 'De eerste muren zijn gevallen' : 'De donjon wordt bestormd', false, 2);
           sfx.horn();
           break;
+        case 'finale':
+          this.announce('De beslissende bestorming!', 'Elke donjon kan nu sneller vallen — alles op alles', false, 3);
+          sfx.horn();
+          break;
         case 'keepContest':
           if (e.team === p?.team) {
             this.announce('De vijand is in je donjon!', 'Verjaag ze uit de cirkel', true, 2);

@@ -19,7 +19,7 @@ export const BYZ = { outerGap: 12, outerH: 7, outerT: 2.4, moatIn: 3, moatOut: 8
 const RING = { 2: 105, 3: 118, 4: 128, 5: 142, 6: 156 };
 
 // Basis-HP van bouwwerken (geschaald met de potjeslengte)
-export const STRUCT_HP = { wall: 9000, tower: 14000, gate: 7000, outerWall: 6500, outerGate: 5500, outerTower: 9000 };
+export const STRUCT_HP = { wall: 9000, tower: 14000, gate: 12000, outerWall: 6500, outerGate: 9000, outerTower: 9000 };
 
 export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
   const rng = makeRng(seed);
@@ -189,6 +189,19 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
       const [sx, sz] = W(-12 + (k % 6) * 4.8, 2 + Math.floor(k / 6) * 5);
       fort.spawn.push({ x: sx, z: sz });
     }
+    // verdedigingsplekken verspreid over de voorkant van het fort
+    fort.defendSpots = [];
+    for (const [du, dv] of [[-9, 14], [9, 14], [0, 12], [-15, 8], [15, 8], [-6, 6], [6, 6], [-14, -2], [14, -2], [0, 3]]) {
+      const [dx, dz] = W(du, dv);
+      fort.defendSpots.push({ x: dx, z: dz });
+    }
+    if (byz) {
+      // ook tussen de twee muren
+      for (const du of [-18, -8, 8, 18]) {
+        const [dx, dz] = W(du, F.W + BYZ.outerGap / 2);
+        fort.defendSpots.push({ x: dx, z: dz, outer: true });
+      }
+    }
     const outerFront = byz ? F.W + BYZ.outerGap + BYZ.moatOut + 6 : F.W + 12;
     const [rx, rz] = W(0, outerFront);
     fort.rally = { x: rx, z: rz };
@@ -301,4 +314,18 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
   }
 
   return { teams, N, R, radius, half, obstacles, structures, forts, moats, capturePoints, decor, roads, seed };
+}
+
+// In welk fort (binnen de binnenmuur) ligt een punt? Anders 'field'.
+export function regionOf(map, x, z) {
+  for (const f of map.forts) {
+    const dx = x - f.cx;
+    const dz = z - f.cz;
+    const c = Math.cos(f.rot);
+    const s = Math.sin(f.rot);
+    const lx = c * dx - s * dz;
+    const lz = s * dx + c * dz;
+    if (Math.abs(lx) < f.W && Math.abs(lz) < f.W) return f.team;
+  }
+  return 'field';
 }

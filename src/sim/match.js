@@ -1,8 +1,8 @@
 // De volledige spelsimulatie, los van rendering. Draait identiek in de browser en in Node.
-import { ARMOR, STRUCT, WEAPONS, UNITS, FACTIONS, LEADERS, TROOP_SIZES, MATCH_LENGTHS, DIFFICULTIES } from './data.js';
+import { ARMOR, STRUCT, SIEGE_VULN, WEAPONS, UNITS, FACTIONS, LEADERS, TROOP_SIZES, MATCH_LENGTHS, DIFFICULTIES } from './data.js';
 import { makeRng, clamp, angleDiff, turnTowards, ballistic } from './math.js';
 import { ObstacleGrid, UnitGrid, pushCircle, pointInside, toLocal } from './geom.js';
-import { generateMap } from './map.js';
+import { generateMap, regionOf } from './map.js';
 import { NavGrid, NAV_INF } from './nav.js';
 import { Commander, unitThink, unitSteer } from './ai.js';
 
@@ -21,11 +21,11 @@ function bodyOf(def) {
   return { r: def.role === 'leader' ? 0.45 : 0.4, h: def.role === 'leader' ? 2.0 : 1.85 };
 }
 
-let UID = 1;
 
 export class Match {
   constructor(settings) {
     this.settings = { ...settings };
+    this.uid = 1;
     const s = this.settings;
     this.rng = makeRng(s.seed ?? 1453);
     this.length = MATCH_LENGTHS[s.length || 'normal'];
@@ -81,7 +81,7 @@ export class Match {
     const body = bodyOf(def);
     const t = this.teamById[team];
     const u = {
-      id: UID++, team, alliance: t.alliance, def, role: def.role, typeId,
+      id: this.uid++, team, alliance: t.alliance, def, role: def.role, typeId,
       isLeader: def.role === 'leader', isPlayer: !!opts.isPlayer,
       x, z, y: 0, vx: 0, vz: 0, yaw: t.fort.rot, pitch: 0, speed: 0,
       radius: body.r, height: body.h,
@@ -122,15 +122,19 @@ export class Match {
     const leader = this.createUnit(L.unit, t.id, x, z);
     leader.cryCd = 15;
     t.leader = leader;
-    // lijfwacht + vaandeldrager
-    const guards = [];
-    for (let i = 0; i < 4; i++) {
-      const [gx, gz] = this.spawnPoint(t, 3 + i);
+    // lijfwacht + vaandeldrager (een bestaande lijfwacht gaat mee met de nieuwe leider)
+    let sq = this.squads.find((q) => q.team === t.id && q.order.kind === 'guard' && q.members.some((m) => m.alive));
+    if (!sq) sq = this.makeSquad(t, [], { kind: 'guard', leader });
+    sq.order.leader = leader;
+    sq.members = sq.members.filter((m) => m.alive);
+    while (sq.members.length < 4) {
+      const [gx, gz] = this.spawnPoint(t, 3 + sq.members.length);
       const g = this.createUnit(L.guard, t.id, gx, gz);
-      if (i === 0) g.banner = true;
-      guards.push(g);
+      g.squad = sq;
+      sq.members.push(g);
     }
-    this.makeSquad(t, guards, { kind: 'guard', leader });
+    if (!sq.members.some((m) => m.banner)) sq.members[0].banner = true;
+    sq.type = sq.members[0].def;
     if (this.player && this.player.team === t.id && this.player.isLeader) return leader;
     return leader;
   }
@@ -149,6 +153,7 @@ export class Match {
     }
     u.isPlayer = true;
     u.squad = null;
+    if (u.isLeader) u.cryCd = this.time;
     this.player = u;
     this.playerRespawnT = 0;
     return u;
@@ -779,7 +784,7 @@ export class Match {
     if (!e.alive) return 0;
     if (this.time - e.spawnT < 2 && !opts.dot) return 0; // korte bescherming na het verschijnen
     let mult;
-    if (e.siege) mult = STRUCT.wood[type] ?? 1;
+    if (e.siege) mult = SIEGE_VULN[type] ?? 1;
     else mult = ARMOR[e.def.armor][type] ?? 1;
     if (attacker) {
       const at = this.teamById[attacker.team];
@@ -787,12 +792,14 @@ export class Match {
       mult *= 0.85 + (0.3 * at.morale) / 100;
     }
     mult *= 1 - Math.min(0.6, (e.aura?.def || 0) + (e.buff.until > this.time ? e.buff.def : 0));
+    // verschanst: verdedigers in hun eigen fort of op de muur zijn beter beschermd
+    if (!e.siege && (e.post || regionOf(this.map, e.x, e.z) === e.team)) mult *= 0.78;
     // schild vangt aanvallen van voren op
     if (e.def.shield && attacker && !opts.dot && !opts.splash) {
       const facing = this._facing(e, attacker);
       if (facing > 0.35) {
         const ranged = opts.proj;
-        if (e.def.shield === 'pavise') mult *= ranged ? (e.speed < 0.5 && e.weapons[e.wi].kind === 'ranged' ? 0.25 : 0.55) : 0.8;
+        if (e.def.shield === 'pavise') mult *= ranged ? (e.speed < 0.5 && e.weapons[e.wi].kind === 'ranged' ? 0.42 : 0.7) : 0.85;
         else mult *= ranged ? 0.5 : 0.78;
         opts.blocked = true;
       }
@@ -877,6 +884,7 @@ export class Match {
     st.dock = null;
     this.nav.invalidate();
     const fort = st.fort;
+    if (!fort.breached) fort.breachedAt = this.time;
     fort.breached = true;
     const owner = this.teamById[st.team];
     owner.morale -= st.gate ? 10 : 8;
@@ -906,6 +914,7 @@ export class Match {
     let bd = maxD;
     for (const p of f.posts) {
       if (p.occupant || p.struct.destroyed) continue;
+      if (!u.isPlayer && p.reserved && p.reserved !== u && p.reserved.alive && p.reserved.ai?.post === p) continue;
       const d = Math.hypot(p.footX - u.x, p.footZ - u.z);
       if (d < bd) {
         bd = d;
@@ -1005,13 +1014,17 @@ export class Match {
     for (const t of this.teams) {
       if (!t.alive) continue;
       const owned = this.map.capturePoints.filter((c) => c.owner === t.id).length;
-      let inc = 1.7 * t.faction.incomeMult * this.length.income + owned * 0.55;
+      // inkomen schaalt mee met de legergrootte (±3,3 man-punten/s bij 60 per team)
+      const scale = this.cap / 60;
+      let inc = (3.3 * t.faction.incomeMult * this.length.income + owned * 0.5) * scale;
+      // laatste verdediging: een fort met een bres krijgt eerst extra rekruten, daarna raakt het uitgeput
+      if (t.fort.breached) inc *= this.time - t.fort.breachedAt < 240 ? 1.35 : 0.8;
       const playerSide = this.player && this.allianceOf(this.player.team) === t.alliance;
       if (!playerSide && this.settings.withPlayer !== false) inc *= this.diff.enemyIncome;
-      t.manpower = Math.min(t.manpower + inc * dt, 400);
+      t.manpower = Math.min(t.manpower + inc * dt, 400 * scale);
       t.waveT -= dt;
       if (t.waveT <= 0) {
-        t.waveT = WAVE_INTERVAL;
+        t.waveT = t.fort.breached || this.commanders[t.index].inside > 0 ? WAVE_INTERVAL * 0.6 : WAVE_INTERVAL;
         const free = this.cap - t.units;
         if (free >= 3) {
           const n = this.recruit(t, Math.min(free, 16));
@@ -1105,22 +1118,28 @@ export class Match {
         }
         return false;
       });
-      const capTime = 80 * this.length.capture * (t.leader?.alive ? 1.3 : 1);
-      if (att > 0 && def === 0) {
+      const late = this.time > this.length.timeLimit * 0.62 ? 0.6 : 1;
+      // beslissende bestorming: een kleine meerderheid volstaat en de inname gaat sneller
+      const finale = this.time > this.length.timeLimit * 0.75;
+      const capTime = 140 * this.length.capture * late * (finale ? 0.7 : 1) * (t.leader?.alive ? 1.25 : 1);
+      // de leider telt als vier verdedigers
+      const defW = def + (leaderHere ? 3 : 0);
+      const push = finale ? att - defW : att - defW * 2;
+      if (att > 0 && push > 0) {
         if (!f.captureBy || f.captureBy !== attAlli) {
           if (f.capture > 0.02 && f.captureBy !== attAlli) f.capture = Math.max(0, f.capture - dt / capTime);
           else f.captureBy = attAlli;
         }
         if (f.captureBy === attAlli) {
           if (f.capture === 0) this.events.push({ t: 'keepContest', team: t.id });
-          f.capture += (dt / capTime) * Math.min(1.5, 0.4 + att * 0.12);
+          f.capture += (dt / capTime) * Math.min(1.5, 0.35 + push * 0.12);
           if (this.phase < 3) {
             this.phase = 3;
             this.events.push({ t: 'phase', n: 3 });
           }
         }
         if (f.capture >= 1) this.fortFalls(t, attAlli);
-      } else if (att === 0) f.capture = Math.max(0, f.capture - (dt / capTime) * (leaderHere ? 1.2 : 0.5));
+      } else if (defW >= att) f.capture = Math.max(0, f.capture - (dt / capTime) * (att === 0 ? (leaderHere ? 1.2 : 0.5) : 0.25));
     }
   }
 
@@ -1148,6 +1167,10 @@ export class Match {
   }
 
   _checkVictory() {
+    if (!this.finaleAnnounced && this.time > this.length.timeLimit * 0.75) {
+      this.finaleAnnounced = true;
+      this.events.push({ t: 'finale' });
+    }
     const aliveAllis = new Set(this.teams.filter((t) => t.alive).map((t) => t.alliance));
     if (aliveAllis.size <= 1) {
       this.endMatch([...aliveAllis][0] || null, 'conquest');

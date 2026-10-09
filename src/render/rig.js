@@ -618,8 +618,10 @@ export function poseSiege(pose, u, kind, t) {
     setR(pose, 1, k * 1.45, 0, 0);
   }
   if (!u.alive) {
+    // vernield tuig zakt scheef in en verdwijnt langzaam in de grond
     const k = smooth(clamp01(u.deadT / 1.5));
-    return { tilt: 0.25 * k, drop: 0.6 * k };
+    const sink = Math.max(0, u.deadT - 8) * 0.25;
+    return { tilt: (kind === 'tower' ? 0.9 : 0.35) * k, drop: 0.8 * k + sink };
   }
   setR(pose, 2, (u.gait || 0) * 0.5, 0, 0);
   setR(pose, 3, 0, Math.sin(t * 2 + u.variant) * 0.3, 0);

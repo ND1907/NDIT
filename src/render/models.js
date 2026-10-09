@@ -101,13 +101,13 @@ function body(b, S) {
   // benen
   for (const [th, sh, side] of [[HB.THIGH_R, HB.SHIN_R, -1], [HB.THIGH_L, HB.SHIN_L, 1]]) {
     if (S.legs === 'plate') {
-      b.cyl(th, 0.085, 0.07, 0.44, S.steel || '#a9b0ba', { p: [0, -0.22, 0], metal: 1 });
+      b.cyl(th, 0.095, 0.074, 0.44, S.steel || '#a9b0ba', { p: [0, -0.22, 0], metal: 1 });
       b.sph(th, 0.07, S.steel || '#a9b0ba', { p: [0, -0.44, 0.02], metal: 1, s: [1, 1, 1.2] });
-      b.cyl(sh, 0.065, 0.05, 0.42, S.steel || '#a9b0ba', { p: [0, -0.21, 0], metal: 1 });
+      b.cyl(sh, 0.07, 0.054, 0.42, S.steel || '#a9b0ba', { p: [0, -0.21, 0], metal: 1 });
       b.box(sh, 0.1, 0.07, 0.25, S.steel || '#a9b0ba', { p: [0, -0.465, 0.05], metal: 1 });
     } else {
-      b.cyl(th, 0.08, 0.062, 0.44, S.legColor || '#3b3a35', { p: [0, -0.22, 0], tint: S.tintLegs ? 1 : 0 });
-      b.cyl(sh, 0.06, 0.045, 0.3, S.legColor || '#3b3a35', { p: [0, -0.15, 0] });
+      b.cyl(th, 0.09, 0.066, 0.44, S.legColor || '#3b3a35', { p: [0, -0.22, 0], tint: S.tintLegs ? 1 : 0 });
+      b.cyl(sh, 0.066, 0.05, 0.3, S.legColor || '#3b3a35', { p: [0, -0.15, 0] });
       // laarzen
       const bc = S.boots || '#4a3020';
       const tall = S.bootsTall;
@@ -118,17 +118,17 @@ function body(b, S) {
     void side;
   }
   // bekken
-  b.cyl(HB.PELVIS, 0.165, 0.15, 0.2, S.hipColor || S.legColor || '#3b3a35', { p: [0, 0.0, 0], s: [1, 1, 0.75] });
+  b.cyl(HB.PELVIS, 0.172, 0.158, 0.2, S.hipColor || S.legColor || '#3b3a35', { p: [0, 0.0, 0], s: [1, 1, 0.75] });
   // romp
   const tc = S.torsoColor || '#7a6a50';
-  b.lathe(HB.SPINE, [[0.0, -0.02], [0.155, -0.02], [0.165, 0.12], [0.185, 0.3], [0.17, 0.42], [0.09, 0.48], [0.0, 0.49]], tc, { s: [1, 1, 0.7], metal: S.torsoMetal || 0 });
+  b.lathe(HB.SPINE, [[0.0, -0.02], [0.165, -0.02], [0.172, 0.12], [0.2, 0.3], [0.19, 0.41], [0.1, 0.48], [0.0, 0.49]], tc, { s: [1, 1, 0.72], metal: S.torsoMetal || 0 });
   b.cyl(HB.SPINE, 0.052, 0.058, 0.08, skin, { p: [0, 0.5, 0.005], tint: 1 });
   // armen
   for (const [ua, la, hand] of [[HB.UARM_R, HB.LARM_R, -1], [HB.UARM_L, HB.LARM_L, 1]]) {
     const sc = S.sleeve || tc;
-    b.sph(ua, 0.068, S.pauldron || sc, { p: [0, -0.01, 0], metal: S.pauldron ? 1 : 0, s: S.pauldron ? [1.35, 1.0, 1.25] : [1, 1, 1] });
-    b.cyl(ua, 0.052, 0.046, 0.28, sc, { p: [0, -0.14, 0], metal: S.armMetal || 0 });
-    b.cyl(la, 0.045, 0.038, 0.24, S.forearm || sc, { p: [0, -0.12, 0], metal: S.forearmMetal || 0 });
+    b.sph(ua, 0.075, S.pauldron || sc, { p: [0, -0.01, 0], metal: S.pauldron ? 1 : 0, s: S.pauldron ? [1.35, 1.0, 1.25] : [1, 1, 1] });
+    b.cyl(ua, 0.06, 0.051, 0.28, sc, { p: [0, -0.14, 0], metal: S.armMetal || 0 });
+    b.cyl(la, 0.051, 0.042, 0.24, S.forearm || sc, { p: [0, -0.12, 0], metal: S.forearmMetal || 0 });
     if (S.cuffs) b.cyl(la, 0.05, 0.05, 0.05, S.cuffs, { p: [0, -0.21, 0], detail: true });
     b.box(la, 0.075, 0.095, 0.05, S.gloves || skin, { p: [0, -0.27, 0.005], tint: S.gloves ? 0 : 1, metal: S.glovesMetal || 0 });
     void hand;
@@ -543,6 +543,7 @@ const SPEC = {
   hun_knight: { skin: '#d6aa86', torsoColor: STEEL, sleeve: STEEL, armMetal: 1, forearmMetal: 1, gloves: STEEL, glovesMetal: 1, chest: 'plate', pauldron: STEEL, surcoat: '#c8102e', surcoatStripes: '#f2f0ea', skirt: 'tassets', legs: 'plate', head: 'sallet', visor: true, plume: '#f2f0ea', pennon: '#1d5a32', lanceColor: '#c8102e' },
   hun_light: { skin: '#d6aa86', torsoColor: '#1f4a8a', sleeve: '#1f4a8a', chest: 'kaftan', inner: '#d4a72c', buttons: '#d4a72c', skirt: 'tunic', skirtColor: '#1f4a8a', sash: '#c8102e', legColor: '#c8102e', boots: '#cf9a1e', bootsTall: true, head: 'furHat', headColor: '#2a1e16', hatTop: '#c8102e', plume: '#f2f0ea', mustache: '#3a2414', shieldColor: '#c8102e', emblem: 'stripes', emblemColor: '#f2f0ea', pennon: '#1d5a32' },
   hun_pike: { skin: '#d6aa86', torsoColor: '#1d5a32', sleeve: '#d8ccb0', chest: 'brigandine', brigColor: '#1d5a32', skirt: 'tunic', skirtColor: '#d8ccb0', legColor: '#c8102e', boots: '#3a2a1a', head: 'kettle', mustache: '#3a2414' },
+  hun_xbow: { skin: '#d6aa86', torsoColor: '#1d5a32', sleeve: '#c8b48a', chest: 'brigandine', brigColor: '#1d5a32', skirt: 'tunic', skirtColor: '#c8b48a', legColor: '#c8102e', boots: '#3a2a1a', head: 'kettle', mustache: '#3a2414', shieldColor: '#c8102e', shieldRim: '#6b4423', emblem: 'stripes', emblemColor: '#f2f0ea' },
   hun_gun: { skin: '#d6aa86', torsoColor: '#7a6a4a', sleeve: '#7a6a4a', chest: 'gambeson', gambColor: '#9a8a6a', skirt: 'tunic', skirtColor: '#1d5a32', belt: '#3a2a1a', legColor: '#c8102e', boots: '#3a2a1a', head: 'kettle', mustache: '#3a2414', shieldColor: '#1d5a32', shieldRim: '#6b4423', emblem: 'stripes', emblemColor: '#c8102e' },
   hun_guard: { scale: 1.05, skin: '#d6aa86', torsoColor: STEEL, sleeve: STEEL, armMetal: 1, forearmMetal: 1, gloves: STEEL, glovesMetal: 1, chest: 'plate', pauldron: STEEL, surcoat: '#1d5a32', skirt: 'tassets', legs: 'plate', head: 'sallet', plume: '#c8102e', cape: '#1d5a32', shieldColor: '#c8102e', emblem: 'stripes', emblemColor: '#f2f0ea' },
   hunyadi: { scale: 1.12, skin: '#d6aa86', torsoColor: '#c9cfd8', sleeve: '#c9cfd8', armMetal: 1, forearmMetal: 1, gloves: '#c9cfd8', glovesMetal: 1, chest: 'plate', goldTrim: true, pauldron: '#d4a72c', surcoat: '#1f3f7a', skirt: 'tassets', legs: 'plate', head: 'furHat', headColor: '#2a1e16', hatTop: '#c8102e', plume: '#f2f0ea', mustache: '#4a3020', cape: '#9b1020', capeTrim: '#e8e0d0' },
