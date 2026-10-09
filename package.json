@@ -11,7 +11,9 @@
     "cap:sync": "npm run build && npx cap sync",
     "android": "npm run build && npx cap sync android && npx cap open android",
     "ios": "npm run build && npx cap sync ios && npx cap open ios",
-    "build:demo": "node scripts/build-demo.mjs"
+    "build:demo": "node scripts/build-demo.mjs",
+    "test": "vitest run",
+    "simulate": "node scripts/simulate.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
   }
 }

@@ -1,0 +1,1207 @@
+// De volledige spelsimulatie, los van rendering. Draait identiek in de browser en in Node.
+import { ARMOR, STRUCT, WEAPONS, UNITS, FACTIONS, LEADERS, TROOP_SIZES, MATCH_LENGTHS, DIFFICULTIES } from './data.js';
+import { makeRng, clamp, angleDiff, turnTowards, ballistic } from './math.js';
+import { ObstacleGrid, UnitGrid, pushCircle, pointInside, toLocal } from './geom.js';
+import { generateMap } from './map.js';
+import { NavGrid, NAV_INF } from './nav.js';
+import { Commander, unitThink, unitSteer } from './ai.js';
+
+export const GRAVITY = 9.8;
+const WAVE_INTERVAL = 24;
+const LEADER_RESPAWN = 150;
+const PLAYER_RESPAWN = 6;
+const CORPSE_TIME = 25;
+
+// Afmetingen van eenheden voor botsing en treffers
+function bodyOf(def) {
+  if (def.role === 'siege') return def.weapons[0] === 'bombard' ? { r: 1.8, h: 1.8 } : { r: 2.4, h: 6 };
+  if (def.role === 'ram') return { r: 2.0, h: 2.8 };
+  if (def.role === 'tower') return { r: 3.0, h: 12 };
+  if (def.mounted) return { r: 0.85, h: 2.75 };
+  return { r: def.role === 'leader' ? 0.45 : 0.4, h: def.role === 'leader' ? 2.0 : 1.85 };
+}
+
+let UID = 1;
+
+export class Match {
+  constructor(settings) {
+    this.settings = { ...settings };
+    const s = this.settings;
+    this.rng = makeRng(s.seed ?? 1453);
+    this.length = MATCH_LENGTHS[s.length || 'normal'];
+    this.diff = DIFFICULTIES[s.difficulty || 'normal'];
+    this.troops = TROOP_SIZES[s.troops || 'normal'];
+    this.cap = s.capOverride || this.troops.perTeam;
+
+    // allianties
+    this.teams = s.teams.map((id, i) => ({
+      id, index: i, faction: FACTIONS[id],
+      alliance: s.mode === 'ffa' ? id : FACTIONS[id].side,
+      alive: true, manpower: 60, morale: 70, waveT: 4 + i * 2, waveN: 0, siegeT: 70 + i * 10, siegeIdx: 0,
+      leader: null, leaderRespawnT: 0, leaderDeaths: 0, cryCd: 20,
+      stats: { kills: 0, losses: 0, recruited: 0, structDmg: 0, leaderKills: 0 },
+      eliminatedAt: null, fort: null, units: 0,
+    }));
+    // als iedereen dezelfde kant heeft (bv. alleen christenen gekozen) → ieder voor zich
+    const allis = new Set(this.teams.map((t) => t.alliance));
+    if (allis.size < 2) for (const t of this.teams) t.alliance = t.id;
+    this.teamById = Object.fromEntries(this.teams.map((t) => [t.id, t]));
+    this.allianceOf = (teamId) => this.teamById[teamId].alliance;
+
+    this.map = generateMap(s.teams, { seed: s.seed ?? 1453, structHp: this.length.structHp });
+    this.teams.forEach((t, i) => (t.fort = this.map.forts[i]));
+    for (const st of this.map.structures) st.alliance = this.allianceOf(st.team);
+    this.obGrid = new ObstacleGrid(this.map.half, 8);
+    for (const o of this.map.obstacles) this.obGrid.insert(o);
+    this.unitGrid = new UnitGrid(this.map.half, 4, 4096);
+    this.nav = new NavGrid(this.map, 2);
+    this.fieldJobs = new Map();
+
+    this.units = [];
+    this.projectiles = [];
+    this.fires = [];
+    this.events = [];
+    this.squads = [];
+    this.time = 0;
+    this.over = false;
+    this.winner = null;
+    this.phase = 1;
+    this.player = null;
+    this.input = null;
+    this.commanders = this.teams.map((t) => new Commander(this, t));
+    this.tick = 0;
+    this._precomputeFields();
+
+    this._spawnInitial();
+  }
+
+  // ------------------------------------------------------------------ eenheden
+  createUnit(typeId, team, x, z, opts = {}) {
+    const def = UNITS[typeId];
+    const body = bodyOf(def);
+    const t = this.teamById[team];
+    const u = {
+      id: UID++, team, alliance: t.alliance, def, role: def.role, typeId,
+      isLeader: def.role === 'leader', isPlayer: !!opts.isPlayer,
+      x, z, y: 0, vx: 0, vz: 0, yaw: t.fort.rot, pitch: 0, speed: 0,
+      radius: body.r, height: body.h,
+      hp: def.hp, maxHp: def.hp, alive: true, deadT: 0,
+      mounted: def.mounted, siege: ['siege', 'ram', 'tower'].includes(def.role),
+      weapons: def.weapons.map((w) => WEAPONS[w]), wi: 0,
+      ammo: def.weapons.map((w) => WEAPONS[w].ammo ?? Infinity),
+      cd: this.rng() * 0.5, windup: 0, pending: null, sprayT: 0,
+      anim: 'idle', animT: this.rng() * 10, attackT: 9, hitT: 9, gait: 0,
+      squad: null, ai: { thinkT: this.rng() * 0.5, target: null, struct: null, mode: 'order', passT: 0, stuckT: 0, lx: x, lz: z, reactT: 0 },
+      post: null, climb: null, blockedBy: null,
+      buff: { dmg: 0, def: 0, speed: 0, until: 0 }, aura: null, burnT: 0, burnBy: null,
+      kills: 0, dmgDealt: 0, lastAttackT: -99, lastHurtT: -99, spawnT: this.time,
+      variant: Math.floor(this.rng() * 1000),
+    };
+    this.units.push(u);
+    t.units++;
+    return u;
+  }
+
+  _spawnInitial() {
+    for (const t of this.teams) {
+      this.spawnLeader(t);
+      const n = Math.round(this.cap * 0.7);
+      this.recruit(t, n, true);
+    }
+    if (this.settings.withPlayer !== false && this.settings.playerTeam) this.spawnPlayer();
+  }
+
+  spawnPoint(t, k = 0) {
+    const sp = t.fort.spawn[k % t.fort.spawn.length];
+    return [sp.x + (this.rng() - 0.5) * 2, sp.z + (this.rng() - 0.5) * 2];
+  }
+
+  spawnLeader(t) {
+    const L = LEADERS[t.id];
+    const [x, z] = this.spawnPoint(t, 2);
+    const leader = this.createUnit(L.unit, t.id, x, z);
+    leader.cryCd = 15;
+    t.leader = leader;
+    // lijfwacht + vaandeldrager
+    const guards = [];
+    for (let i = 0; i < 4; i++) {
+      const [gx, gz] = this.spawnPoint(t, 3 + i);
+      const g = this.createUnit(L.guard, t.id, gx, gz);
+      if (i === 0) g.banner = true;
+      guards.push(g);
+    }
+    this.makeSquad(t, guards, { kind: 'guard', leader });
+    if (this.player && this.player.team === t.id && this.player.isLeader) return leader;
+    return leader;
+  }
+
+  spawnPlayer() {
+    const s = this.settings;
+    const t = this.teamById[s.playerTeam];
+    if (!t || !t.alive) return null;
+    let u;
+    if (UNITS[s.playerUnit]?.role === 'leader') {
+      u = t.leader && t.leader.alive ? t.leader : this.spawnLeader(t);
+      t.leaderRespawnT = 0;
+    } else {
+      const [x, z] = this.spawnPoint(t, Math.floor(this.rng() * 12));
+      u = this.createUnit(s.playerUnit, t.id, x, z);
+    }
+    u.isPlayer = true;
+    u.squad = null;
+    this.player = u;
+    this.playerRespawnT = 0;
+    return u;
+  }
+
+  // Kies eenheidstypes volgens de factiemix en vorm groepjes (squads).
+  recruit(t, count, free = false) {
+    const fac = t.faction;
+    let spawned = 0;
+    let guard = 0;
+    while (spawned < count && guard++ < 50) {
+      // type kiezen volgens de gewenste mix t.o.v. huidige aantallen
+      const alive = {};
+      for (const u of this.units) if (u.alive && u.team === t.id) alive[u.typeId] = (alive[u.typeId] || 0) + 1;
+      let bestType = null;
+      let bestScore = -Infinity;
+      const total = Object.values(alive).reduce((a, b) => a + b, 0) + 1;
+      for (const [type, share] of Object.entries(fac.mix)) {
+        const score = share - (alive[type] || 0) / total + this.rng() * 0.08;
+        if (score > bestScore) {
+          bestScore = score;
+          bestType = type;
+        }
+      }
+      const def = UNITS[bestType];
+      const size = Math.min(count - spawned, def.mounted ? 5 : 8);
+      const affordable = free ? size : Math.min(size, Math.floor(t.manpower / def.cost));
+      if (affordable < Math.min(size, 3)) break;
+      const members = [];
+      for (let i = 0; i < affordable; i++) {
+        const [x, z] = this.spawnPoint(t, spawned + i);
+        members.push(this.createUnit(bestType, t.id, x, z));
+      }
+      if (!free) t.manpower -= affordable * def.cost;
+      t.stats.recruited += affordable;
+      spawned += affordable;
+      this.makeSquad(t, members, { kind: 'rally' });
+    }
+    return spawned;
+  }
+
+  makeSquad(t, members, order) {
+    const sq = { id: this.squads.length + 1, team: t.id, members, order, type: members[0]?.def, formT: 0, anchor: null };
+    for (const m of members) m.squad = sq;
+    this.squads.push(sq);
+    return sq;
+  }
+
+  // ------------------------------------------------------------------ velden
+  // Geeft het (eventueel nog verouderde) veld terug; ontbrekende of verouderde velden
+  // worden op de achtergrond (verdeeld over frames) berekend. Kan null geven.
+  field(key, alliance) {
+    const k = key + '|' + alliance;
+    const f = this.nav.fields.get(k);
+    if (f && f.version === this.nav.version) return f;
+    if (!this.fieldJobs.has(k) || this.fieldJobs.get(k).version !== this.nav.version) {
+      this.fieldJobs.set(k, this.nav.startJob(k, this._goals(key), alliance, this.allianceOf));
+    }
+    return f || null;
+  }
+
+  _computeField(key, alliance) {
+    return this.nav.compute(key + '|' + alliance, this._goals(key), alliance, this.allianceOf);
+  }
+
+  // Velden die zeker nodig zijn alvast berekenen (tijdens het laden)
+  _precomputeFields() {
+    const allis = [...new Set(this.teams.map((t) => t.alliance))];
+    for (const a of allis) {
+      for (const t of this.teams) {
+        if (t.alliance === a) {
+          this._computeField('home:' + t.id, a);
+          this._computeField('rally:' + t.id, a);
+        } else this._computeField('keep:' + t.id, a);
+      }
+    }
+  }
+
+  _goals(key) {
+    const [kind, arg] = key.split(':');
+    let goals;
+    if (kind === 'keep') {
+      const f = this.teamById[arg].fort;
+      goals = [[f.keep.x, f.keep.z, f.keep.r - 0.5]];
+    } else if (kind === 'cp') {
+      const c = this.map.capturePoints[+arg];
+      goals = [[c.x, c.z, c.r * 0.8]];
+    } else if (kind === 'home') {
+      const f = this.teamById[arg].fort;
+      goals = [[f.inside.x, f.inside.z, 7]];
+    } else if (kind === 'rally') {
+      const f = this.teamById[arg].fort;
+      goals = [[f.rally.x, f.rally.z, 7]];
+    } else if (kind === 'gate') {
+      const f = this.teamById[arg].fort;
+      const g = f.gates.find((gg) => !gg.destroyed) || f.gate;
+      goals = [[g.x, g.z, 5]];
+    }
+    return goals;
+  }
+
+  // ------------------------------------------------------------------ hoofdlus
+  update(dt) {
+    if (this.over) return;
+    this.time += dt;
+    this.tick++;
+    // navigatievelden op de achtergrond bijwerken (max ±12k cellen per frame)
+    for (const [k, job] of this.fieldJobs) {
+      if (job.version !== this.nav.version) {
+        this.fieldJobs.delete(k);
+        continue;
+      }
+      if (this.nav.runJob(job, 12000)) this.fieldJobs.delete(k);
+      break;
+    }
+    this.unitGrid.rebuild(this.units);
+
+    for (const c of this.commanders) if (c.team.alive) c.update(dt);
+    if (this.tick % 15 === 0) this._updateAuras();
+
+    for (let i = 0; i < this.units.length; i++) {
+      const u = this.units[i];
+      if (!u.alive) {
+        u.deadT += dt;
+        continue;
+      }
+      if (u.isPlayer) this._playerControl(u, dt);
+      else {
+        u.ai.thinkT -= dt;
+        if (u.ai.thinkT <= 0) {
+          u.ai.thinkT = 0.3 + this.rng() * 0.25;
+          unitThink(this, u);
+        }
+        unitSteer(this, u, dt);
+      }
+      this._combatTick(u, dt);
+      this._move(u, dt);
+      this._animTick(u, dt);
+    }
+    this._updateProjectiles(dt);
+    if (this.tick % 6 === 0) this._updateCapture(dt * 6);
+    this._economy(dt);
+    this._leaders(dt);
+    this._morale(dt);
+    if (this.tick % 60 === 0) this._cleanup();
+    this._checkVictory();
+  }
+
+  // ------------------------------------------------------------------ speler
+  _playerControl(u, dt) {
+    const inp = this.input;
+    if (!inp) return;
+    if (u.post) {
+      // op de muur: draaien en schieten; bewegen = afdalen
+      if (Math.hypot(inp.mx, inp.mz) > 0.5 || inp.climb) this.leavePost(u);
+      u.yaw = inp.yaw;
+      u.pitch = inp.pitch;
+      u.dvx = 0;
+      u.dvz = 0;
+    } else if (u.mounted) {
+      const mag = Math.min(1, Math.hypot(inp.mx, inp.mz));
+      u.dvx = inp.mx;
+      u.dvz = inp.mz;
+      u.dmag = mag * (inp.sprint ? 1.15 : 1);
+      u.lookYaw = inp.yaw;
+      u.pitch = inp.pitch;
+    } else {
+      const sp = this.speedOf(u) * (inp.sprint ? 1.25 : 0.85);
+      u.dvx = inp.mx * sp;
+      u.dvz = inp.mz * sp;
+      u.yaw = inp.yaw;
+      u.pitch = inp.pitch;
+    }
+    if (inp.switchWeapon) {
+      inp.switchWeapon = false;
+      if (u.weapons.length > 1) u.wi = u.wi ? 0 : 1;
+      this.events.push({ t: 'switch', u });
+    }
+    if (inp.selectWeapon != null) {
+      if (u.weapons[inp.selectWeapon]) u.wi = inp.selectWeapon;
+      inp.selectWeapon = null;
+    }
+    if (inp.cry) {
+      inp.cry = false;
+      if (u.isLeader) this.battleCry(u);
+    }
+    if (inp.climb) {
+      inp.climb = false;
+      if (!u.post && !u.mounted && !u.siege) {
+        const p = this.nearestFreePost(u, 3.5);
+        if (p) this.takePost(u, p);
+      }
+    }
+    if (inp.attack) {
+      const w = u.weapons[u.wi];
+      if (!w) { /* geen wapen */ } else if (w.kind === 'melee') this.startMelee(u, null);
+      else if (w.kind === 'spray') this.startSpray(u);
+      else if (inp.aim) this.shoot(u, inp.aim.x, inp.aim.y, inp.aim.z, 1);
+    }
+  }
+
+  // ------------------------------------------------------------------ beweging
+  speedOf(u) {
+    let s = u.def.speed;
+    const t = this.teamById[u.team];
+    s *= 1 + (u.aura?.speed || 0) + (u.buff.until > this.time ? u.buff.speed : 0);
+    s *= 0.9 + t.morale / 1000;
+    if (u.burnT > 0) s *= 1.15;
+    return s;
+  }
+
+  _move(u, dt) {
+    if (u.climb) {
+      // op of af de muur klimmen
+      const c = u.climb;
+      c.t += dt / c.dur;
+      const k = Math.min(1, c.t);
+      u.x = c.x0 + (c.x1 - c.x0) * k;
+      u.z = c.z0 + (c.z1 - c.z0) * k;
+      u.y = c.y0 + (c.y1 - c.y0) * k;
+      u.speed = 1;
+      if (k >= 1) {
+        u.climb = null;
+        if (c.toPost) {
+          u.post = c.toPost;
+          u.yaw = c.toPost.faceYaw;
+        }
+      }
+      return;
+    }
+    if (u.post) {
+      u.x = u.post.x;
+      u.z = u.post.z;
+      u.y = u.post.y;
+      u.vx = u.vz = 0;
+      u.speed = 0;
+      return;
+    }
+
+    let tx = u.dvx || 0;
+    let tz = u.dvz || 0;
+    if (u.mounted) {
+      // paard: draait geleidelijk en kan niet zijwaarts
+      const mag = u.dmag ?? Math.min(1, Math.hypot(tx, tz));
+      let target = 0;
+      if (mag > 0.08) {
+        const want = Math.atan2(tx, tz);
+        const d = angleDiff(u.yaw, want);
+        u.yaw += clamp(d, -2.4 * dt, 2.4 * dt);
+        target = this.speedOf(u) * mag * (Math.abs(d) > 1.8 ? 0.35 : 1);
+      }
+      u.speed += clamp(target - u.speed, -12 * dt, 5 * dt);
+      tx = Math.sin(u.yaw) * u.speed;
+      tz = Math.cos(u.yaw) * u.speed;
+      u.vx = tx;
+      u.vz = tz;
+      u.dmag = undefined;
+    } else {
+      const acc = u.siege ? 2 : 12;
+      u.vx += (tx - u.vx) * Math.min(1, acc * dt);
+      u.vz += (tz - u.vz) * Math.min(1, acc * dt);
+      u.speed = Math.hypot(u.vx, u.vz);
+      if (u.siege && u.speed > 0.2) u.yaw = turnTowards(u.yaw, Math.atan2(u.vx, u.vz), 0.8 * dt);
+    }
+    // gracht vertraagt
+    const f = this._fortNear(u.x, u.z);
+    let slow = 1;
+    if (f && f.byz) {
+      for (const m of this.map.moats) if (pointInside(m, u.x, u.z)) slow = 0.4;
+    }
+    const px = u.x;
+    const pz = u.z;
+    u.x += u.vx * dt * slow;
+    u.z += u.vz * dt * slow;
+
+    // eenheden duwen elkaar weg
+    const r = u.radius;
+    const self = u;
+    this.unitGrid.query(u.x, u.z, r + 3.1, (o) => {
+      if (o === self || o.post || o.climb) return false;
+      if (o.docked && o.alliance === self.alliance) return false;
+      const dx = self.x - o.x;
+      const dz = self.z - o.z;
+      const rr = r + o.radius;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr || d2 < 1e-6) return false;
+      if (Math.abs(self.y - o.y) > 2) return false;
+      const d = Math.sqrt(d2);
+      // zware eenheden wijken minder
+      const wSelf = self.siege ? 0.1 : self.mounted ? 0.35 : 0.5;
+      const wOther = o.siege ? 2 : 1;
+      const push = (rr - d) * Math.min(1, wSelf * wOther);
+      self.x += (dx / d) * push;
+      self.z += (dz / d) * push;
+      // ruiters in galop vertrappen vijandelijk voetvolk
+      if (self.mounted && self.speed > 6.5 && o.alliance !== self.alliance && !o.mounted && !o.siege) this._trample(self, o);
+      return false;
+    });
+
+    // obstakels
+    u.blockedBy = null;
+    const uy = u.y;
+    const ally = u.alliance;
+    this.obGrid.near(u.x, u.z, r + 1, (o) => {
+      if (o.y0 > uy + 1.9 || o.y1 < uy + 0.3) return;
+      const st = o.struct;
+      if (st) {
+        if (st.gate && st.alliance === ally) return; // eigen poort gaat open
+        if (st.dock && st.dock.alliance === ally && this._inDockWindow(st, u)) return;
+      }
+      const p = pushCircle(o, u.x, u.z, r);
+      if (p) {
+        u.x = p[0];
+        u.z = p[1];
+        if (st && st.alliance !== ally) u.blockedBy = st;
+      }
+    });
+    // muur beklimmen via een aangelegde belegeringstoren
+    u.y = 0;
+    if (u.ai.dockSt) {
+      const st = u.ai.dockSt;
+      if (st.destroyed || !st.dock) u.ai.dockSt = null;
+      else if (this._inDockWindow(st, u)) {
+        const [, lz] = toLocal(st.ob, u.x, u.z);
+        const k = clamp(1 - (Math.abs(lz) - st.ob.hz) / 3, 0, 1);
+        u.y = st.h * k;
+      }
+    }
+    // binnen de kaart blijven
+    const d = Math.hypot(u.x, u.z);
+    const lim = this.map.radius - 2;
+    if (d > lim) {
+      u.x *= lim / d;
+      u.z *= lim / d;
+    }
+    if (!u.mounted) {
+      const moved = Math.hypot(u.x - px, u.z - pz) / Math.max(dt, 1e-4);
+      u.speed = Math.min(u.speed, moved);
+    }
+  }
+
+  _inDockWindow(st, u) {
+    const [lx] = toLocal(st.ob, u.x, u.z);
+    const [dlx] = toLocal(st.ob, st.dock.x, st.dock.z);
+    return Math.abs(lx - dlx) < 2.6;
+  }
+
+  _fortNear(x, z) {
+    for (const f of this.map.forts) if (Math.abs(x - f.cx) < f.extent + 4 && Math.abs(z - f.cz) < f.extent + 4) return f;
+    return null;
+  }
+
+  _trample(rider, victim) {
+    victim._trampleT = victim._trampleT || 0;
+    if (this.time - victim._trampleT < 1.2) return;
+    victim._trampleT = this.time;
+    this.damageUnit(victim, 24, 'blunt', rider, { trample: true });
+  }
+
+  // ------------------------------------------------------------------ gevecht
+  _combatTick(u, dt) {
+    if (u.cd > 0) u.cd -= dt * (1 + (u.aura?.reload || 0));
+    if (u.burnT > 0) {
+      u.burnT -= dt;
+      u._burnAcc = (u._burnAcc || 0) + dt;
+      if (u._burnAcc > 0.5) {
+        u._burnAcc = 0;
+        this.damageUnit(u, 5, 'fire', u.burnBy, { dot: true });
+      }
+    }
+    if (u.windup > 0) {
+      u.windup -= dt;
+      if (u.windup <= 0 && u.alive) this._resolveMelee(u);
+    }
+    if (u.sprayT > 0) {
+      u.sprayT -= dt;
+      u._sprayAcc = (u._sprayAcc || 0) + dt;
+      if (u._sprayAcc >= 0.2) {
+        u._sprayAcc = 0;
+        this._sprayTick(u);
+      }
+    }
+  }
+
+  startMelee(u, target) {
+    const w = u.weapons[u.wi];
+    if (u.cd > 0 || u.windup > 0 || w.kind !== 'melee') return false;
+    u.windup = w.windup;
+    u.cd = w.cooldown;
+    u.pending = target;
+    u.attackT = 0;
+    u.attackKind = w.anim;
+    u.lastAttackT = this.time;
+    this.events.push({ t: 'swing', u, w });
+    return true;
+  }
+
+  _resolveMelee(u) {
+    const w = u.weapons[u.wi];
+    const tgt = u.pending;
+    u.pending = null;
+    // bouwwerk (poort/muur) of belegeringsdoel
+    if (tgt && tgt.ob) {
+      const st = tgt;
+      if (st.destroyed) return;
+      const [lx, lz] = toLocal(st.ob, u.x, u.z);
+      const ox = Math.max(0, Math.abs(lx) - st.ob.hx);
+      const oz = Math.max(0, Math.abs(lz) - st.ob.hz);
+      if (Math.hypot(ox, oz) <= w.reach + u.radius) this.damageStruct(st, w.damage * (w.structMult || 1), w.dmg, u);
+      return;
+    }
+    if (w.structOnly) return;
+    const reach = w.reach + (u.mounted ? 0.6 : 0);
+    const arc = w.anim === 'thrust' || w.anim === 'couch' ? 0.45 : 0.9;
+    const maxHits = w.anim === 'thrust' || w.anim === 'couch' ? 1 : 2;
+    const fx = Math.sin(u.yaw);
+    const fz = Math.cos(u.yaw);
+    const hits = [];
+    this.unitGrid.query(u.x, u.z, reach + 3.2, (e) => {
+      if (e.alliance === u.alliance || !e.alive) return false;
+      const dx = e.x - u.x;
+      const dz = e.z - u.z;
+      const d = Math.hypot(dx, dz);
+      if (d - e.radius > reach) return false;
+      if (Math.abs(e.y - u.y) > 2.2) return false;
+      if (d > 0.7 && (dx * fx + dz * fz) / d < Math.cos(arc)) return false;
+      hits.push([d, e]);
+      return false;
+    });
+    hits.sort((a, b) => a[0] - b[0]);
+    let n = 0;
+    for (const [, e] of hits) {
+      if (n++ >= maxHits) break;
+      let dmg = w.damage;
+      const opts = { melee: true };
+      if (w.antiCav && e.mounted) dmg *= w.antiCav;
+      if (w.charge && u.mounted && u.speed > 6.5) {
+        // charge met de lans — maar niet tegen gezette speren van voren
+        const braced = (e.role === 'spear' || e.weapons[e.wi]?.antiCav) && this._facing(e, u) > 0.5;
+        dmg *= braced ? 0.6 : w.charge;
+        opts.charge = !braced;
+        if (braced) this.damageUnit(u, 30 * (e.weapons[e.wi]?.antiCav || 2), 'pierce', e, { melee: true });
+      }
+      this.damageUnit(e, dmg, w.dmg, u, opts);
+    }
+  }
+
+  // hoe recht kijkt a naar b (−1..1)
+  _facing(a, b) {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const d = Math.hypot(dx, dz) || 1;
+    return (Math.sin(a.yaw) * dx + Math.cos(a.yaw) * dz) / d;
+  }
+
+  startSpray(u) {
+    const w = u.weapons[u.wi];
+    if (u.cd > 0 || w.kind !== 'spray' || u.ammo[u.wi] <= 0) return false;
+    u.cd = w.cooldown;
+    u.sprayT = w.duration;
+    u.ammo[u.wi]--;
+    u.attackT = 0;
+    u.attackKind = 'siphon';
+    u.lastAttackT = this.time;
+    this.events.push({ t: 'fire', u });
+    return true;
+  }
+
+  _sprayTick(u) {
+    const w = u.weapons[u.wi];
+    const fx = Math.sin(u.yaw);
+    const fz = Math.cos(u.yaw);
+    this.unitGrid.query(u.x + fx * w.range * 0.5, u.z + fz * w.range * 0.5, w.range * 0.6 + 2, (e) => {
+      if (e.alliance === u.alliance || !e.alive) return false;
+      const dx = e.x - u.x;
+      const dz = e.z - u.z;
+      const d = Math.hypot(dx, dz);
+      if (d > w.range + e.radius || d < 0.1) return false;
+      if ((dx * fx + dz * fz) / d < Math.cos(w.cone)) return false;
+      this.damageUnit(e, w.damage, 'fire', u, {});
+      if (!e.siege) {
+        e.burnT = w.burn;
+        e.burnBy = u;
+      }
+      return false;
+    });
+    // ook houten poorten en belegeringstuig vatten vlam
+    this.obGrid.near(u.x + fx * w.range * 0.6, u.z + fz * w.range * 0.6, w.range * 0.5, (o) => {
+      if (o.struct && o.struct.material === 'wood' && o.struct.alliance !== u.alliance) this.damageStruct(o.struct, w.damage, 'fire', u);
+    });
+  }
+
+  // Schiet met het actieve afstandswapen op een punt.
+  shoot(u, tx, ty, tz, accuracyMult = 1) {
+    const w = u.weapons[u.wi];
+    if (u.cd > 0 || (w.kind !== 'ranged' && w.kind !== 'thrown' && w.kind !== 'siege')) return false;
+    if (u.ammo[u.wi] <= 0) return false;
+    const ox = u.x + Math.sin(u.yaw) * (u.siege ? 2.5 : 0.4);
+    const oz = u.z + Math.cos(u.yaw) * (u.siege ? 2.5 : 0.4);
+    const oy = u.y + (u.siege ? (w.lob ? 5 : 1.4) : u.mounted ? 2.4 : 1.45);
+    const dir = ballistic(ox, oy, oz, tx, ty, tz, w.speed, GRAVITY, !!w.lob);
+    let spread = w.spread * accuracyMult * (1 - (u.aura?.accuracy || 0));
+    if (u.speed > 1.5 && !u.siege) spread *= 1.8;
+    dir.x += (this.rng() - 0.5) * 2 * spread;
+    dir.y += (this.rng() - 0.5) * 2 * spread;
+    dir.z += (this.rng() - 0.5) * 2 * spread;
+    const l = Math.hypot(dir.x, dir.y, dir.z);
+    this.projectiles.push({
+      kind: w.proj, x: ox, y: oy, z: oz,
+      vx: (dir.x / l) * w.speed, vy: (dir.y / l) * w.speed, vz: (dir.z / l) * w.speed,
+      owner: u, team: u.team, alliance: u.alliance, w, life: w.lob ? 12 : 6, alive: true,
+    });
+    u.ammo[u.wi]--;
+    u.cd = w.cooldown;
+    u.attackT = 0;
+    u.attackKind = w.anim;
+    u.lastAttackT = this.time;
+    this.events.push({ t: 'shoot', u, w, x: ox, y: oy, z: oz });
+    return true;
+  }
+
+  _updateProjectiles(dt) {
+    const P = this.projectiles;
+    for (let i = P.length - 1; i >= 0; i--) {
+      const p = P[i];
+      p.life -= dt;
+      p.vy -= GRAVITY * dt;
+      const sx = p.vx * dt;
+      const sy = p.vy * dt;
+      const sz = p.vz * dt;
+      const len = Math.hypot(sx, sy, sz);
+      const dx = sx / len;
+      const dy = sy / len;
+      const dz = sz / len;
+      // eerste obstakel
+      const ally = p.alliance;
+      const siegeShot = p.w.kind === 'siege';
+      const hitOb = this.obGrid.raycast(p.x, p.y, p.z, dx, dy, dz, len, (o) => {
+        if (siegeShot) return !!o.struct || o.kind === 'keep' || o.kind === 'lintel';
+        return !(o.struct && o.struct.alliance === ally && o.struct.gate && p.y > 4);
+      });
+      let tEnd = hitOb ? hitOb.t : len;
+      let ground = false;
+      if (dy < 0 && p.y + dy * tEnd <= 0) {
+        tEnd = -p.y / dy;
+        ground = true;
+      }
+      // eenheden
+      let hitU = null;
+      let hitT = tEnd;
+      const mx = p.x + dx * len * 0.5;
+      const mz = p.z + dz * len * 0.5;
+      const owner = p.owner;
+      this.unitGrid.query(mx, mz, len * 0.5 + 3.2, (u) => {
+        if (u.alliance === ally || u === owner) return false;
+        const ox = p.x - u.x;
+        const oz = p.z - u.z;
+        const a = dx * dx + dz * dz;
+        if (a < 1e-9) return false;
+        const b = 2 * (ox * dx + oz * dz);
+        const c = ox * ox + oz * oz - u.radius * u.radius;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) return false;
+        const sq = Math.sqrt(disc);
+        let t = (-b - sq) / (2 * a);
+        if (t < 0) t = (-b + sq) / (2 * a);
+        if (t < 0 || t >= hitT) return false;
+        const y = p.y + dy * t - u.y;
+        if (y < 0 || y > u.height) return false;
+        hitU = u;
+        hitT = t;
+        return false;
+      });
+      const w = p.w;
+      if (hitU) {
+        const hx = p.x + dx * hitT;
+        const hy = p.y + dy * hitT;
+        const hz = p.z + dz * hitT;
+        if (w.kind === 'siege') this._siegeImpact(p, hx, hy, hz, null);
+        else {
+          const head = !hitU.mounted && !hitU.siege && hy - hitU.y > hitU.height - 0.32;
+          this.damageUnit(hitU, w.damage, w.dmg, p.owner, { head, proj: true, dirx: dx, dirz: dz });
+          this.events.push({ t: 'phit', x: hx, y: hy, z: hz, u: hitU, kind: p.kind });
+        }
+        P.splice(i, 1);
+        continue;
+      }
+      if (hitOb || ground) {
+        const hx = p.x + dx * tEnd;
+        const hy = Math.max(0, p.y + dy * tEnd);
+        const hz = p.z + dz * tEnd;
+        if (w.kind === 'siege') this._siegeImpact(p, hx, hy, hz, hitOb?.o?.struct || null);
+        else {
+          if (hitOb?.o?.struct && hitOb.o.struct.alliance !== ally) this.damageStruct(hitOb.o.struct, w.damage, w.dmg, p.owner);
+          this.events.push({ t: 'stick', x: hx, y: hy, z: hz, dx, dy, dz, kind: p.kind, ground });
+        }
+        P.splice(i, 1);
+        continue;
+      }
+      p.x += sx;
+      p.y += sy;
+      p.z += sz;
+      if (p.life <= 0 || Math.abs(p.x) > this.map.half || Math.abs(p.z) > this.map.half) P.splice(i, 1);
+    }
+  }
+
+  _siegeImpact(p, x, y, z, struct) {
+    const w = p.w;
+    if (struct && struct.alliance !== p.alliance) this.damageStruct(struct, w.damage, 'siege', p.owner);
+    else {
+      // ook een bijna-treffer beschadigt nabije muren een beetje
+      this.obGrid.near(x, z, w.splash, (o) => {
+        if (o.struct && o.struct.alliance !== p.alliance && !o.struct.destroyed) this.damageStruct(o.struct, w.damage * 0.35, 'siege', p.owner);
+      });
+    }
+    this.unitGrid.query(x, z, w.splash + 1, (u) => {
+      if (u.alliance === p.alliance || Math.abs(u.y - y) > 4) return false;
+      const d = Math.hypot(u.x - x, u.z - z);
+      const k = 1 - d / (w.splash + 1);
+      if (k > 0) this.damageUnit(u, w.unitDamage * k, 'siege', p.owner, { splash: true });
+      return false;
+    });
+    this.events.push({ t: 'impact', x, y, z, kind: p.kind, struct: !!struct });
+  }
+
+  // Schade aan een eenheid, met pantser, schild, aura's, moreel en moeilijkheid.
+  damageUnit(e, base, type, attacker, opts = {}) {
+    if (!e.alive) return 0;
+    if (this.time - e.spawnT < 2 && !opts.dot) return 0; // korte bescherming na het verschijnen
+    let mult;
+    if (e.siege) mult = STRUCT.wood[type] ?? 1;
+    else mult = ARMOR[e.def.armor][type] ?? 1;
+    if (attacker) {
+      const at = this.teamById[attacker.team];
+      mult *= 1 + (attacker.aura?.dmg || 0) + (attacker.buff.until > this.time ? attacker.buff.dmg : 0);
+      mult *= 0.85 + (0.3 * at.morale) / 100;
+    }
+    mult *= 1 - Math.min(0.6, (e.aura?.def || 0) + (e.buff.until > this.time ? e.buff.def : 0));
+    // schild vangt aanvallen van voren op
+    if (e.def.shield && attacker && !opts.dot && !opts.splash) {
+      const facing = this._facing(e, attacker);
+      if (facing > 0.35) {
+        const ranged = opts.proj;
+        if (e.def.shield === 'pavise') mult *= ranged ? (e.speed < 0.5 && e.weapons[e.wi].kind === 'ranged' ? 0.25 : 0.55) : 0.8;
+        else mult *= ranged ? 0.5 : 0.78;
+        opts.blocked = true;
+      }
+    }
+    if (opts.head) mult *= 1.6;
+    if (e.isPlayer && attacker && !attacker.isPlayer) mult *= this.diff.toPlayer;
+    const dmg = base * mult;
+    e.hp -= dmg;
+    e.lastHurtT = this.time;
+    e.hitT = 0;
+    if (attacker) {
+      attacker.dmgDealt += dmg;
+      if (!e.isPlayer && e.ai && attacker.alive && attacker.alliance !== e.alliance) {
+        if (!e.ai.target || this.rng() < 0.35) e.ai.target = attacker;
+      }
+    }
+    this.events.push({ t: 'hurt', u: e, by: attacker, dmg, blocked: !!opts.blocked, head: !!opts.head, melee: !!opts.melee, charge: !!opts.charge, type });
+    if (e.hp <= 0) this.kill(e, attacker, opts);
+    return dmg;
+  }
+
+  kill(u, attacker, opts = {}) {
+    if (!u.alive) return;
+    u.alive = false;
+    u.hp = 0;
+    u.deadT = 0;
+    u.windup = 0;
+    u.sprayT = 0;
+    if (u.post) {
+      u.post.occupant = null;
+      u.post = null;
+    }
+    u.climb = null;
+    const t = this.teamById[u.team];
+    t.units--;
+    t.stats.losses++;
+    t.morale -= u.isLeader ? 0 : 0.12;
+    if (attacker && attacker.team !== u.team) {
+      attacker.kills++;
+      const at = this.teamById[attacker.team];
+      at.stats.kills++;
+      at.morale += 0.15;
+      if (u.isLeader) at.stats.leaderKills++;
+    }
+    if (u.squad) {
+      const m = u.squad.members;
+      const k = m.indexOf(u);
+      if (k >= 0) m.splice(k, 1);
+      u.squad = null;
+    }
+    if (u.isLeader) {
+      t.leaderDeaths++;
+      t.leaderRespawnT = LEADER_RESPAWN;
+      t.morale -= 30;
+      // schok: tijdelijk minder schade voor het hele team
+      for (const o of this.units) if (o.alive && o.team === u.team) o.buff = { dmg: -0.15, def: -0.1, speed: 0, until: this.time + 30 };
+      this.events.push({ t: 'leaderDown', team: u.team, u, by: attacker });
+    }
+    if (u.isPlayer) this.playerRespawnT = u.isLeader ? 30 : PLAYER_RESPAWN;
+    this.events.push({ t: 'kill', u, by: attacker, head: !!opts.head, rout: !!opts.rout });
+  }
+
+  damageStruct(st, base, type, attacker) {
+    if (st.destroyed) return 0;
+    const dmg = base * (STRUCT[st.material][type] ?? 0);
+    if (dmg <= 0) return 0;
+    st.hp -= dmg;
+    st.lastHitT = this.time;
+    if (attacker) {
+      this.teamById[attacker.team].stats.structDmg += dmg;
+      attacker.dmgDealt += dmg * 0.1;
+    }
+    this.events.push({ t: 'structHit', st, dmg, type });
+    if (st.hp <= 0) this.destroyStruct(st, attacker);
+    return dmg;
+  }
+
+  destroyStruct(st, attacker) {
+    st.destroyed = true;
+    st.hp = 0;
+    st.ob.active = false;
+    st.dock = null;
+    this.nav.invalidate();
+    const fort = st.fort;
+    fort.breached = true;
+    const owner = this.teamById[st.team];
+    owner.morale -= st.gate ? 10 : 8;
+    if (attacker) this.teamById[attacker.team].morale += 8;
+    // verdedigers op dit stuk muur vallen naar beneden
+    for (const p of fort.posts) {
+      if (p.struct !== st || !p.occupant) continue;
+      const u = p.occupant;
+      p.occupant = null;
+      u.post = null;
+      u.x = p.footX;
+      u.z = p.footZ;
+      u.y = 0;
+      this.damageUnit(u, 45, 'blunt', attacker, { dot: true });
+    }
+    if (this.phase < 2) {
+      this.phase = 2;
+      this.events.push({ t: 'phase', n: 2 });
+    }
+    this.events.push({ t: 'structDestroyed', st, by: attacker });
+  }
+
+  // ------------------------------------------------------------------ muurposten
+  nearestFreePost(u, maxD = 60) {
+    const f = this.teamById[u.team].fort;
+    let best = null;
+    let bd = maxD;
+    for (const p of f.posts) {
+      if (p.occupant || p.struct.destroyed) continue;
+      const d = Math.hypot(p.footX - u.x, p.footZ - u.z);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  takePost(u, p) {
+    if (p.occupant) return false;
+    p.occupant = u;
+    u.climb = { x0: u.x, z0: u.z, y0: 0, x1: p.x, z1: p.z, y1: p.y, t: 0, dur: 1.6, toPost: p };
+    this.events.push({ t: 'climb', u });
+    return true;
+  }
+
+  leavePost(u) {
+    const p = u.post;
+    if (!p) return;
+    p.occupant = null;
+    u.post = null;
+    u.climb = { x0: p.x, z0: p.z, y0: p.y, x1: p.footX, z1: p.footZ, y1: 0, t: 0, dur: 1.2, toPost: null };
+  }
+
+  // ------------------------------------------------------------------ belegeringstoren
+  dockTower(tower, st) {
+    if (st.destroyed || st.gate) return;
+    st.dock = { x: tower.x, z: tower.z, alliance: tower.alliance, tower };
+    tower.docked = st;
+    this.nav.invalidate();
+    this.events.push({ t: 'dock', st, u: tower });
+  }
+
+  // ------------------------------------------------------------------ leiders
+  _updateAuras() {
+    for (const u of this.units) u.aura = null;
+    for (const t of this.teams) {
+      const L = t.leader;
+      if (!L || !L.alive) continue;
+      const a = LEADERS[t.id].aura;
+      this.unitGrid.query(L.x, L.z, a.radius, (o) => {
+        if (o.team === t.id) o.aura = a;
+        return false;
+      });
+    }
+  }
+
+  battleCry(L) {
+    const t = this.teamById[L.team];
+    if (!L.alive || (L.cryCd || 0) > this.time) return false;
+    const c = LEADERS[t.id].cry;
+    L.cryCd = this.time + c.cooldown;
+    this.unitGrid.query(L.x, L.z, c.radius, (o) => {
+      if (o.team !== t.id) return false;
+      o.buff = { dmg: c.dmg, def: c.def, speed: c.speed, until: this.time + c.duration };
+      if (c.heal) o.hp = Math.min(o.maxHp, o.hp + o.maxHp * c.heal);
+      return false;
+    });
+    t.morale += c.morale;
+    L.attackT = 0;
+    L.attackKind = 'cry';
+    this.events.push({ t: 'cry', u: L, name: c.name });
+    return true;
+  }
+
+  _leaders(dt) {
+    for (const t of this.teams) {
+      if (!t.alive) continue;
+      if (t.leader && !t.leader.alive) {
+        t.leaderRespawnT -= dt;
+        if (t.leaderRespawnT <= 0) {
+          const playerIsLeader = this.player && this.player.team === t.id && this.player.isLeader;
+          const L = this.spawnLeader(t);
+          t.morale += 15;
+          if (playerIsLeader) {
+            L.isPlayer = true;
+            this.player = L;
+          }
+          this.events.push({ t: 'leaderBack', team: t.id, u: L });
+        }
+      }
+    }
+    // speler terug laten komen
+    if (this.player && !this.player.alive && this.settings.withPlayer !== false) {
+      this.playerRespawnT -= dt;
+      const t = this.teamById[this.player.team];
+      if (this.playerRespawnT <= 0 && t.alive && !this.player.isLeader) {
+        this.player.isPlayer = false;
+        this.spawnPlayer();
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ economie
+  _economy(dt) {
+    for (const t of this.teams) {
+      if (!t.alive) continue;
+      const owned = this.map.capturePoints.filter((c) => c.owner === t.id).length;
+      let inc = 1.7 * t.faction.incomeMult * this.length.income + owned * 0.55;
+      const playerSide = this.player && this.allianceOf(this.player.team) === t.alliance;
+      if (!playerSide && this.settings.withPlayer !== false) inc *= this.diff.enemyIncome;
+      t.manpower = Math.min(t.manpower + inc * dt, 400);
+      t.waveT -= dt;
+      if (t.waveT <= 0) {
+        t.waveT = WAVE_INTERVAL;
+        const free = this.cap - t.units;
+        if (free >= 3) {
+          const n = this.recruit(t, Math.min(free, 16));
+          if (n > 0) {
+            t.waveN++;
+            this.events.push({ t: 'wave', team: t.id, n });
+          }
+        }
+      }
+      // belegeringsgeschut
+      t.siegeT -= dt;
+      if (t.siegeT <= 0) {
+        t.siegeT = 95 + this.rng() * 30;
+        const active = this.units.filter((u) => u.alive && u.team === t.id && u.siege).length;
+        const type = t.faction.siege[t.siegeIdx % t.faction.siege.length];
+        const def = UNITS[type];
+        if (active < 3 && t.manpower >= def.cost) {
+          t.manpower -= def.cost;
+          t.siegeIdx++;
+          const y = t.fort.siegeYard;
+          const u = this.createUnit(type, t.id, y.x, y.z);
+          u.yaw = t.fort.rot;
+          this.makeSquad(t, [u], { kind: 'siege' });
+          this.events.push({ t: 'siegeBuilt', team: t.id, u });
+        }
+      }
+    }
+  }
+
+  _morale(dt) {
+    for (const t of this.teams) {
+      t.morale += (60 - t.morale) * 0.004 * dt;
+      t.morale = clamp(t.morale, 5, 100);
+    }
+  }
+
+  // ------------------------------------------------------------------ inname
+  _updateCapture(dt) {
+    // veroveringspunten
+    for (const c of this.map.capturePoints) {
+      const count = {};
+      const teamCount = {};
+      this.unitGrid.query(c.x, c.z, c.r, (u) => {
+        if (u.siege || u.y > 1) return false;
+        count[u.alliance] = (count[u.alliance] || 0) + 1;
+        teamCount[u.team] = (teamCount[u.team] || 0) + 1;
+        return false;
+      });
+      const allis = Object.keys(count);
+      if (allis.length === 1) {
+        const a = allis[0];
+        const rate = (dt / 14) * Math.min(1.8, 0.6 + count[a] * 0.2);
+        const ownerAlli = c.owner ? this.allianceOf(c.owner) : null;
+        if (ownerAlli && ownerAlli !== a) {
+          c.progress -= rate;
+          if (c.progress <= 0) {
+            this.events.push({ t: 'cpLost', cp: c, team: c.owner });
+            this.teamById[c.owner].morale -= 4;
+            c.owner = null;
+            c.progress = 0;
+          }
+        } else if (!ownerAlli) {
+          c.by = a;
+          c.progress += rate;
+          if (c.progress >= 1) {
+            const team = Object.entries(teamCount).filter(([tm]) => this.allianceOf(tm) === a).sort((x, y) => y[1] - x[1])[0][0];
+            c.owner = team;
+            c.progress = 1;
+            this.teamById[team].morale += 4;
+            this.events.push({ t: 'cpTaken', cp: c, team });
+          }
+        } else c.progress = Math.min(1, c.progress + rate);
+      }
+    }
+    // donjons
+    for (const t of this.teams) {
+      const f = t.fort;
+      if (f.fallen) continue;
+      let att = 0;
+      let def = 0;
+      let attAlli = null;
+      let leaderHere = false;
+      this.unitGrid.query(f.keep.x, f.keep.z, f.keep.r, (u) => {
+        if (u.siege || u.y > 1) return false;
+        if (u.alliance === t.alliance) {
+          def++;
+          if (u.isLeader && u.team === t.id) leaderHere = true;
+        } else {
+          att++;
+          attAlli = u.alliance;
+        }
+        return false;
+      });
+      const capTime = 80 * this.length.capture * (t.leader?.alive ? 1.3 : 1);
+      if (att > 0 && def === 0) {
+        if (!f.captureBy || f.captureBy !== attAlli) {
+          if (f.capture > 0.02 && f.captureBy !== attAlli) f.capture = Math.max(0, f.capture - dt / capTime);
+          else f.captureBy = attAlli;
+        }
+        if (f.captureBy === attAlli) {
+          if (f.capture === 0) this.events.push({ t: 'keepContest', team: t.id });
+          f.capture += (dt / capTime) * Math.min(1.5, 0.4 + att * 0.12);
+          if (this.phase < 3) {
+            this.phase = 3;
+            this.events.push({ t: 'phase', n: 3 });
+          }
+        }
+        if (f.capture >= 1) this.fortFalls(t, attAlli);
+      } else if (att === 0) f.capture = Math.max(0, f.capture - (dt / capTime) * (leaderHere ? 1.2 : 0.5));
+    }
+  }
+
+  fortFalls(t, byAlliance) {
+    const f = t.fort;
+    f.fallen = true;
+    f.capture = 1;
+    f.captureBy = byAlliance;
+    t.alive = false;
+    t.eliminatedAt = this.time;
+    // overgebleven troepen vluchten
+    for (const u of this.units) {
+      if (u.alive && u.team === t.id) {
+        if (u.isPlayer) this.kill(u, null, { rout: true });
+        else this.kill(u, null, { rout: true });
+        u.fled = true;
+      }
+    }
+    for (const c of this.map.capturePoints) if (c.owner === t.id) {
+      c.owner = null;
+      c.progress = 0;
+    }
+    for (const o of this.teams) if (o.alive && o.alliance === byAlliance) o.morale += 20;
+    this.events.push({ t: 'fortFallen', team: t.id, by: byAlliance });
+  }
+
+  _checkVictory() {
+    const aliveAllis = new Set(this.teams.filter((t) => t.alive).map((t) => t.alliance));
+    if (aliveAllis.size <= 1) {
+      this.endMatch([...aliveAllis][0] || null, 'conquest');
+      return;
+    }
+    if (this.time >= this.length.timeLimit) {
+      // tijd op: punten per alliantie
+      const score = {};
+      for (const t of this.teams) {
+        let s = t.stats.kills;
+        if (t.alive) s += 300;
+        for (const st of t.fort.structures) s += (st.hp / st.maxHp) * 15;
+        s += this.map.capturePoints.filter((c) => c.owner === t.id).length * 40;
+        score[t.alliance] = (score[t.alliance] || 0) + s;
+      }
+      const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0][0];
+      this.endMatch(best, 'time');
+    }
+  }
+
+  endMatch(alliance, reason) {
+    if (this.over) return;
+    this.over = true;
+    this.winner = alliance;
+    this.winReason = reason;
+    this.events.push({ t: 'end', alliance, reason });
+  }
+
+  // ------------------------------------------------------------------ animatie
+  _animTick(u, dt) {
+    u.animT += dt;
+    u.attackT += dt;
+    u.hitT += dt;
+    if (u.mounted) u.gait += dt * (u.speed > 0.3 ? 2.2 + u.speed * 0.55 : 0);
+    else u.gait += dt * u.speed * 1.35;
+  }
+
+  _cleanup() {
+    // lijken opruimen en dode squads verwijderen
+    this.units = this.units.filter((u) => u.alive || u.deadT < (u.fled ? 2 : CORPSE_TIME) || u === this.player);
+    this.squads = this.squads.filter((s) => s.members.length > 0);
+  }
+
+  // Statistieken voor het eindscherm
+  summary() {
+    return {
+      time: this.time, winner: this.winner, reason: this.winReason,
+      teams: this.teams.map((t) => ({
+        id: t.id, alliance: t.alliance, alive: t.alive, ...t.stats, morale: Math.round(t.morale),
+        fortHp: Math.round((t.fort.structures.reduce((a, s) => a + s.hp, 0) / t.fort.structures.reduce((a, s) => a + s.maxHp, 0)) * 100),
+        eliminatedAt: t.eliminatedAt, leaderDeaths: t.leaderDeaths,
+      })),
+    };
+  }
+}
+
+export { NAV_INF };
