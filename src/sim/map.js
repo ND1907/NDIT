@@ -122,7 +122,7 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
       }
       // torens op de hoeken
       for (const su of [-1, 1]) for (const sv of [-1, 1]) {
-        const tw = mkStruct(tag === 'outerWall' ? 'outerTower' : 'tower', su * Wr, sv * Wr, th, th, h + 4, towerHp, 'stone', { round: style !== 'serbia' && style !== 'venice', corner: true });
+        const tw = mkStruct(tag === 'outerWall' ? 'outerTower' : 'tower', su * Wr, sv * Wr, th, th, h + 4, towerHp, 'stone', { round: ['ottoman', 'genoa', 'hungary'].includes(style), corner: true });
         if (sv > 0) {
           const [px, pz] = W(su * Wr, sv * Wr);
           const [fx, fz] = W(su * (Wr - th - 1.8), sv * (Wr - th - 1.8));

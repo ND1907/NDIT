@@ -5,109 +5,212 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="theme-color" content="#120c08" />
+    <meta name="theme-color" content="#140f0a" />
     <title>Fetih 1453</title>
     <link rel="icon" href="./icon.svg" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
-  <body data-team="ottoman">
+  <body>
     <div id="game"></div>
 
-    <!-- ===== HUD ===== -->
+    <!-- ================= HUD ================= -->
     <div id="hud" class="hidden">
-      <div id="scorebar">
-        <div class="team o"><span class="tname">Osmanlı</span><span id="score-o">0</span></div>
-        <div class="limit">tot 30</div>
-        <div class="team b"><span id="score-b">0</span><span class="tname">Bizans</span></div>
+      <div id="touch-zone"></div>
+      <div id="topbar">
+        <div id="phase"><span id="phase-name">Fase 1 · Opmars</span><span id="clock">0:00</span></div>
+        <div id="teams"></div>
       </div>
-      <canvas id="minimap" width="132" height="132"></canvas>
-      <div id="killfeed"></div>
-      <div id="kd">⚔ 0 ☠ 0</div>
-      <button id="btn-pause" aria-label="Pauze">❚❚</button>
-
+      <canvas id="minimap" width="200" height="200" aria-label="Kaart"></canvas>
+      <div id="feed"></div>
+      <div id="leaderbars"></div>
       <div id="crosshair"><i></i><i></i><i></i><i></i></div>
       <div id="hitmarker">✕</div>
       <div id="dmg-dir"><div></div></div>
-      <div id="announce"></div>
+      <div id="announce"><div id="announce-title"></div><div id="announce-sub"></div></div>
       <div id="prompt"></div>
-
-      <div id="status">
-        <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100</span></div>
-        <div id="ammo-box"><span id="weapon-name"></span><span id="ammo"></span></div>
+      <div id="bottom">
+        <div id="hpbox">
+          <div id="unit-name"></div>
+          <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100</span></div>
+          <div id="morale"><span>Moreel</span><div id="morale-bar"><div id="morale-fill"></div></div></div>
+        </div>
+        <div id="weaponbox">
+          <span id="weapon-name"></span>
+          <span id="ammo"></span>
+          <div id="reload-bar"><div id="reload-fill"></div></div>
+        </div>
+        <div id="ability" class="hidden"><b>R</b><span id="ability-name">Strijdkreet</span><div id="ability-cd"></div></div>
       </div>
-
-      <div id="touch-zone"></div>
+      <button id="btn-pause" aria-label="Pauze">❚❚</button>
+      <div id="fps" class="hidden"></div>
       <div id="joy-base"><div id="joy-knob"></div></div>
       <div id="buttons" class="touch-only">
         <button id="btn-fire" aria-label="Aanvallen"><span>AANVAL</span></button>
-        <button id="btn-jump" aria-label="Spring">▲</button>
-        <button id="btn-switch" aria-label="Wissel wapen">⇄</button>
-        <button id="btn-mount" class="hidden" aria-label="Paard">🐎</button>
+        <button id="btn-switch" aria-label="Wapen wisselen">⇄</button>
+        <button id="btn-climb" class="hidden" aria-label="Muur op of af">⇅</button>
+        <button id="btn-cry" class="hidden" aria-label="Strijdkreet">📯</button>
       </div>
     </div>
     <div id="vignette"></div>
 
-    <!-- ===== Dood ===== -->
-    <div id="death" class="hidden overlay-soft">
+    <!-- ================= Gesneuveld ================= -->
+    <div id="death" class="hidden">
       <h2>GESNEUVELD</h2>
       <p id="death-text"></p>
       <p id="death-timer"></p>
+      <button id="btn-change-role" class="ghost">Andere rol kiezen</button>
     </div>
 
-    <!-- ===== Hoofdmenu ===== -->
+    <!-- ================= Hoofdmenu ================= -->
     <div id="menu" class="screen">
-      <div class="menu-inner">
+      <div class="panel hero">
+        <div class="eyebrow">Constantinopel · voorjaar 1453</div>
         <h1>FETIH <span>1453</span></h1>
-        <p class="sub">De belegering van Constantinopel · boog, zwaard en paard</p>
-        <div class="teams">
-          <button class="team-card o selected" data-team="ottoman">
-            <div class="emblem">☪</div>
-            <div class="tc-name">Ottomaanse Rijk</div>
-            <div class="tc-desc">Janitsaren &amp; sipahi-ruiters<br />Turkse boog · kılıç-sabel</div>
-          </button>
-          <div class="vs">VS</div>
-          <button class="team-card b" data-team="byzantine">
-            <div class="emblem">☩</div>
-            <div class="tc-name">Byzantijnse Rijk</div>
-            <div class="tc-desc">Stadswacht &amp; kataphrakten<br />boog · spathion met schild</div>
-          </button>
+        <p class="sub">Belegering, veldslag en de strijd om de donjon — met zwaard, boog, kruisboog en de reuzenkanonnen van Urban.</p>
+        <div class="menu-buttons">
+          <button id="btn-new" class="big">Nieuw potje</button>
+          <button id="btn-help" class="ghost">Uitleg &amp; besturing</button>
+          <button id="btn-settings" class="ghost">Instellingen</button>
         </div>
-        <div class="diff">
-          <button data-diff="easy">Makkelijk</button>
-          <button data-diff="normal" class="selected">Normaal</button>
-          <button data-diff="hard">Moeilijk</button>
-        </div>
-        <button id="btn-play" class="big">TEN STRIJDE!</button>
-        <p class="help touch-only">Links slepen = lopen · Rechts slepen = richten · AANVAL ingedrukt houden · ⇄ boog/zwaard · 🐎 paard</p>
-        <p class="help desktop-only">WASD lopen · Shift sprint · Muis richten · Klik aanvallen · Q of 1/2 boog/zwaard · E paard op/af · Spatie springen · Esc pauze<br />Muis niet vastgezet? Houd de rechtermuisknop ingedrukt en sleep om te richten.</p>
+        <p class="tiny">Alle namen, legers en leiders bestonden echt. Zie de uitleg voor de historische achtergrond.</p>
       </div>
     </div>
 
-    <!-- ===== Pauze ===== -->
+    <!-- ================= Potje instellen ================= -->
+    <div id="setup" class="screen hidden">
+      <div class="panel wide">
+        <div class="panel-head"><button class="back" data-back="menu">‹ Terug</button><h2>Nieuw potje</h2></div>
+        <h3>1 · Welke rijken doen mee? <small>(2 tot 6)</small></h3>
+        <div id="faction-grid" class="faction-grid"></div>
+        <h3>2 · Verhoudingen</h3>
+        <div class="seg" id="seg-mode"></div>
+        <p class="hint" id="mode-hint"></p>
+        <h3>3 · Jouw rijk</h3>
+        <div class="seg" id="seg-team"></div>
+        <div class="settings-row">
+          <div><h3>Moeilijkheid</h3><div class="seg" id="seg-diff"></div></div>
+          <div><h3>Potjeslengte</h3><div class="seg" id="seg-length"></div></div>
+          <div><h3>Troepen</h3><div class="seg" id="seg-troops"></div></div>
+        </div>
+        <p class="hint" id="perf-hint"></p>
+        <div class="actions"><button id="btn-to-role" class="big">Verder: kies je rol ›</button></div>
+      </div>
+    </div>
+
+    <!-- ================= Rol kiezen ================= -->
+    <div id="role" class="screen hidden">
+      <div class="panel wide">
+        <div class="panel-head"><button class="back" id="role-back">‹ Terug</button><h2 id="role-title">Wat wil je worden?</h2></div>
+        <div id="role-grid" class="role-grid"></div>
+        <div class="actions"><button id="btn-start" class="big">Ten strijde!</button></div>
+      </div>
+    </div>
+
+    <!-- ================= Laden ================= -->
+    <div id="loading" class="screen hidden"><div class="panel"><h2>Het leger verzamelt zich…</h2><div class="spinner"></div></div></div>
+
+    <!-- ================= Pauze ================= -->
     <div id="pause" class="screen hidden">
-      <div class="menu-inner">
-        <h1>PAUZE</h1>
-        <button id="btn-resume" class="big">Verder spelen</button>
-        <div class="row">
-          <button id="btn-sound">Geluid: aan</button>
-          <button id="btn-sens">Gevoeligheid: normaal</button>
+      <div class="panel">
+        <h2>Gepauzeerd</h2>
+        <div class="menu-buttons">
+          <button id="btn-resume" class="big">Verder spelen</button>
+          <button id="btn-pause-help" class="ghost">Uitleg &amp; besturing</button>
+          <button id="btn-pause-settings" class="ghost">Instellingen</button>
+          <button id="btn-restart" class="ghost">Opnieuw beginnen</button>
+          <button id="btn-quit" class="ghost">Naar hoofdmenu</button>
         </div>
-        <button id="btn-quit">Terug naar menu</button>
       </div>
     </div>
 
-    <!-- ===== Einde ===== -->
-    <div id="gameover" class="screen hidden">
-      <div class="menu-inner">
-        <h1 id="over-title">OVERWINNING!</h1>
-        <div id="over-stats"></div>
-        <button id="btn-again" class="big">Nog een veldslag</button>
-        <button id="btn-menu">Hoofdmenu</button>
+    <!-- ================= Instellingen ================= -->
+    <div id="settings" class="screen hidden">
+      <div class="panel">
+        <div class="panel-head"><button class="back" id="settings-back">‹ Terug</button><h2>Instellingen</h2></div>
+        <label class="slider"><span>Totaal volume</span><input type="range" id="vol-master" min="0" max="100" /></label>
+        <label class="slider"><span>Muziek</span><input type="range" id="vol-music" min="0" max="100" /></label>
+        <label class="slider"><span>Effecten</span><input type="range" id="vol-sfx" min="0" max="100" /></label>
+        <label class="slider"><span>Gevoeligheid richten</span><input type="range" id="sens" min="30" max="250" /></label>
+        <h3>Grafische kwaliteit</h3>
+        <div class="seg" id="seg-quality"></div>
+        <p class="hint">Laag: geen schaduwen, lagere resolutie (aanbevolen voor oudere telefoons). Wordt toegepast bij het volgende potje.</p>
+        <label class="check"><input type="checkbox" id="chk-fps" /> FPS-meter tonen</label>
+        <label class="check"><input type="checkbox" id="chk-invert" /> Verticaal richten omkeren</label>
+      </div>
+    </div>
+
+    <!-- ================= Uitleg ================= -->
+    <div id="help" class="screen hidden">
+      <div class="panel wide scroll">
+        <div class="panel-head"><button class="back" id="help-back">‹ Terug</button><h2>Uitleg &amp; besturing</h2></div>
+        <div class="help-cols">
+          <section>
+            <h3>Doel</h3>
+            <p>Elk rijk heeft een fort met een <b>donjon</b> (de grote toren). Breek door de poort of de muren van de vijand en <b>neem de donjon in</b>: sta met je troepen in de cirkel rond de donjon zonder verdedigers. Het rijk of bondgenootschap dat als laatste een donjon heeft, wint.</p>
+            <h3>Verloop van een potje</h3>
+            <ol>
+              <li><b>Opmars &amp; belegering</b> — legers verzamelen zich, veroveren dorpen op het veld (meer rekruten) en zetten blijdes, bombardes, stormrammen en belegeringstorens in.</li>
+              <li><b>Bres</b> — een poort of muur bezwijkt; het gevecht verplaatst zich naar het fort.</li>
+              <li><b>Strijd om de donjon</b> — houd de cirkel bezet tot de banier valt. Een levende leider in de buurt vertraagt de inname.</li>
+            </ol>
+            <h3>Leiders</h3>
+            <p>Elke leider is sterker, heeft een lijfwacht en vaandeldrager, een <b>aura</b> die nabije soldaten versterkt en een <b>strijdkreet</b> (toets R). Sneuvelt een leider, dan daalt het moreel flink en komt hij pas na 2,5 minuut terug.</p>
+          </section>
+          <section>
+            <h3>Besturing (computer)</h3>
+            <table class="keys">
+              <tr><td>W A S D</td><td>lopen · Shift = rennen</td></tr>
+              <tr><td>Muis</td><td>richten (klik eerst in het spel)</td></tr>
+              <tr><td>Linkermuisknop</td><td>aanvallen / schieten</td></tr>
+              <tr><td>Q · muiswiel · 1 / 2</td><td>wapen wisselen</td></tr>
+              <tr><td>E</td><td>ladder op/af de muur (bij een ladder in je eigen fort)</td></tr>
+              <tr><td>R</td><td>strijdkreet (alleen als leider)</td></tr>
+              <tr><td>Esc / P</td><td>pauze</td></tr>
+            </table>
+            <h3>Besturing (telefoon)</h3>
+            <p>Linkerhelft slepen = lopen (ver duwen = rennen) · rechterhelft slepen = richten · <b>AANVAL</b> ingedrukt houden · ⇄ wapen · ⇅ muur op/af · 📯 strijdkreet.</p>
+          </section>
+          <section>
+            <h3>Wat wint van wat?</h3>
+            <table class="counters">
+              <tr><th>Wapen</th><th>Sterk tegen</th><th>Zwak tegen</th></tr>
+              <tr><td>Speer · piek · hellebaard</td><td>ruiters (gezet: breekt charges)</td><td>boogschutters, kruisbogen</td></tr>
+              <tr><td>Ruiters met lans</td><td>schutters, licht voetvolk</td><td>speren en pieken van voren</td></tr>
+              <tr><td>Turkse boog</td><td>licht gepantserden, snel en ver</td><td>zwaar pantser, schilden</td></tr>
+              <tr><td>Kruisboog</td><td>pantser (traag herladen)</td><td>snelle ruiters</td></tr>
+              <tr><td>Haakbus</td><td>alles (veel schade, rook)</td><td>zeer traag herladen</td></tr>
+              <tr><td>Knots · strijdbijl</td><td>zwaar pantser</td><td>speren (bereik)</td></tr>
+              <tr><td>Zwaard · kılıç</td><td>licht voetvolk, snel</td><td>plaatharnas</td></tr>
+              <tr><td>Grieks vuur</td><td>groepen, stormrammen, torens, poorten</td><td>afstand</td></tr>
+              <tr><td>Bombarde · blijde</td><td>muren en poorten</td><td>ruiters die ze aanvallen</td></tr>
+            </table>
+          </section>
+          <section>
+            <h3>Historische noten</h3>
+            <ul class="notes">
+              <li>De bombardes van de Hongaarse gieter <b>Urban (Orban)</b> beschoten in 1453 de Theodosiaanse muren.</li>
+              <li><b>Giovanni Giustiniani Longo</b> verdedigde met 700 Genuezen de landmuren; <b>Girolamo Minotto</b> leidde als bailo de Venetianen.</li>
+              <li>De Servische despoot <b>Đurađ Branković</b> was Ottomaans vazal en stuurde troepen, waaronder mijnwerkers uit Novo Brdo; hij was er zelf niet bij.</li>
+              <li><b>Hongarije</b> vocht niet mee bij Constantinopel, maar <b>János Hunyadi</b> streed in dezelfde jaren tegen de Ottomanen (Varna 1444, Belgrado 1456).</li>
+              <li>Of er in 1453 echt <b>Grieks vuur</b> werd gebruikt, is onder historici onzeker.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= Uitslag ================= -->
+    <div id="results" class="screen hidden">
+      <div class="panel wide">
+        <h1 id="res-title">OVERWINNING</h1>
+        <p id="res-sub" class="sub"></p>
+        <div id="res-table"></div>
+        <div id="res-player"></div>
+        <div class="actions"><button id="btn-again" class="big">Nog een veldslag</button><button id="btn-res-menu" class="ghost">Hoofdmenu</button></div>
       </div>
     </div>
 
     <div id="rotate-hint">↻ Draai je telefoon horizontaal</div>
-
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>
