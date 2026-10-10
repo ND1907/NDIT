@@ -65,6 +65,7 @@ export class Match {
     this.fieldJobs = new Map();
 
     this.units = [];
+    this.freeHorses = [];
     this.projectiles = [];
     this.fires = [];
     this.events = [];
@@ -99,7 +100,7 @@ export class Match {
       cd: this.rng() * 0.5, windup: 0, pending: null, sprayT: 0,
       anim: 'idle', animT: this.rng() * 10, attackT: 9, hitT: 9, gait: 0,
       squad: null, ai: { thinkT: this.rng() * 0.5, target: null, struct: null, mode: 'order', passT: 0, stuckT: 0, lx: x, lz: z, reactT: 0 },
-      post: null, climb: null, wall: null, blockedBy: null,
+      post: null, climb: null, wall: null, blockedBy: null, vy: 0, airT: 0, mountAnim: null, mountT: def.mounted ? 1 : 0,
       buff: { dmg: 0, def: 0, speed: 0, until: 0 }, aura: null, burnT: 0, burnBy: null,
       kills: 0, dmgDealt: 0, lastAttackT: -99, lastHurtT: -99, spawnT: this.time,
       variant: Math.floor(this.rng() * 1000),
@@ -339,6 +340,7 @@ export class Match {
       this._move(u, dt);
       this._animTick(u, dt);
     }
+    this._updateHorses(dt);
     this._updateProjectiles(dt);
     if (this.tick % 6 === 0) this._updateCapture(dt * 6);
     this._morale(dt);
@@ -350,6 +352,13 @@ export class Match {
   _playerControl(u, dt) {
     const inp = this.input;
     if (!inp) return;
+    if (u.mountAnim) {
+      // tijdens op/afstijgen geen besturing
+      u.dvx = u.dvz = 0;
+      u.yaw = u.mountAnim.yaw;
+      inp.climb = inp.jump = false;
+      return;
+    }
     if (u.post && !u.post.walk) {
       // op een toren/poortpost: draaien en schieten; bewegen of E = afdalen
       if (Math.hypot(inp.mx, inp.mz) > 0.5 || inp.climb) {
@@ -403,11 +412,19 @@ export class Match {
       inp.cry = false;
       if (u.isLeader) this.battleCry(u);
     }
+    if (inp.jump) {
+      inp.jump = false;
+      this.jump(u);
+    }
     if (inp.climb) {
       inp.climb = false;
-      if (!u.post && !u.wall && !u.mounted && !u.siege) {
+      if (u.mounted && !u.mountAnim) this.dismount(u);
+      else if (!u.post && !u.wall && !u.siege && !u.mountAnim) {
+        // dichtstbijzijnde: een losse paard of een ladder
+        const h = this.nearestFreeHorse(u, 2.8);
         const p = this.nearestFreePost(u, 3.5);
-        if (p) this.takePost(u, p);
+        if (h && (!p || Math.hypot(h.x - u.x, h.z - u.z) < Math.hypot(p.footX - u.x, p.footZ - u.z))) this.mount(u, h);
+        else if (p) this.takePost(u, p);
       }
     }
     if (inp.attack) {
@@ -420,7 +437,8 @@ export class Match {
 
   // ------------------------------------------------------------------ beweging
   speedOf(u) {
-    let s = u.def.speed;
+    // ruiter te voet loopt als voetvolk; voetvolk op een paard rijdt als een lichte ruiter
+    let s = u.mounted ? (u.def.mounted ? u.def.speed : 10.5) : u.def.mounted ? 4.3 : u.def.speed;
     const t = this.teamById[u.team];
     s *= 1 + (u.aura?.speed || 0) + (u.buff.until > this.time ? u.buff.speed : 0);
     s *= 0.9 + t.morale / 1000;
@@ -460,6 +478,11 @@ export class Match {
       this._moveOnWall(u, dt);
       return;
     }
+    if (u.mountAnim) {
+      u.vx = u.vz = 0;
+      u.speed = 0;
+      return;
+    }
 
     let tx = u.dvx || 0;
     let tz = u.dvz || 0;
@@ -480,7 +503,7 @@ export class Match {
       u.vz = tz;
       u.dmag = undefined;
     } else {
-      const acc = u.siege ? 2 : 12;
+      const acc = u.siege ? 2 : u.airT > 0 ? 1.2 : 12;
       u.vx += (tx - u.vx) * Math.min(1, acc * dt);
       u.vz += (tz - u.vz) * Math.min(1, acc * dt);
       u.speed = Math.hypot(u.vx, u.vz);
@@ -540,6 +563,7 @@ export class Match {
       }
     });
     // muur beklimmen via een aangelegde belegeringstoren
+    const airY = u.y;
     u.y = 0;
     if (u.ai.dockSt) {
       const st = u.ai.dockSt;
@@ -564,6 +588,17 @@ export class Match {
           }
         }
       }
+    }
+    // springen: zwaartekracht tot de grond
+    if (u.airT > 0) {
+      u.vy -= 14 * dt;
+      const ny = airY + u.vy * dt;
+      u.airT += dt;
+      if (ny <= u.y) {
+        u.vy = 0;
+        u.airT = 0;
+        this.events.push({ t: 'land', u });
+      } else u.y = ny;
     }
     // binnen de kaart blijven
     const d = Math.hypot(u.x, u.z);
@@ -918,6 +953,16 @@ export class Match {
     }
     u.climb = null;
     u.wall = null;
+    if (u.mountAnim) {
+      u.mounted = u.mountAnim.dir < 0;
+      u.mountAnim = null;
+    }
+    if (u.mounted && !opts.rout && !u.siege && this.rng() < 0.55) {
+      // het paard overleeft en blijft zonder ruiter staan; de ruiter valt eraf
+      this._freeHorse(u.x + Math.cos(u.yaw) * 0.6, u.z - Math.sin(u.yaw) * 0.6, u.yaw, u.def.faction, u.variant, u.isLeader);
+      u.mounted = false;
+      u.fellOff = true;
+    }
     const t = this.teamById[u.team];
     t.units--;
     if (!u.siege) t.soldiers--;
@@ -1023,6 +1068,97 @@ export class Match {
     u.post = null;
     u.wall = null;
     u.climb = { x0: p.x, z0: p.z, y0: p.y, x1: p.footX, z1: p.footZ, y1: 0, t: 0, dur: 1.2, toPost: null };
+  }
+
+  // ------------------------------------------------------------------ springen en paarden
+  jump(u) {
+    if (u.airT > 0 || u.climb || u.post || u.wall || u.mountAnim || u.siege || u.y > 0.05) return false;
+    u.vy = u.mounted ? 5.0 : 3.6;
+    u.airT = 1e-3;
+    if (u.mounted) u.speed = Math.min(u.speed + 1.6, this.speedOf(u) * 1.2); // paard springt verder
+    this.events.push({ t: 'jump', u });
+    return true;
+  }
+
+  nearestFreeHorse(u, range) {
+    let best = null;
+    let bd = range;
+    for (const h of this.freeHorses) {
+      const d = Math.hypot(h.x - u.x, h.z - u.z);
+      if (d < bd) {
+        bd = d;
+        best = h;
+      }
+    }
+    return best;
+  }
+
+  _freeHorse(x, z, yaw, faction, variant, leader) {
+    this.horseUid = (this.horseUid || 0) + 1;
+    const h = { id: 'h' + this.horseUid, x, z, y: 0, yaw, alive: true, speed: 0, gait: 0, deadT: 0, variant, isLeader: leader, def: { faction }, free: true };
+    this.freeHorses.push(h);
+    if (this.freeHorses.length > 40) this.freeHorses.shift();
+    return h;
+  }
+
+  // afstijgen: de ruiter stapt links af, het paard blijft staan
+  dismount(u) {
+    if (!u.mounted || u.airT > 0 || u.mountAnim) return false;
+    u.mountAnim = { t: 0, dir: -1, x: u.x, z: u.z, yaw: u.yaw, faction: u.def.faction, variant: u.variant, leader: u.isLeader };
+    u.mountAnim.horse = { x: u.x, z: u.z, y: 0, yaw: u.yaw, alive: true, speed: 0, gait: 0, deadT: 0, variant: u.variant, isLeader: u.isLeader, def: { faction: u.def.faction } };
+    u.speed = 0;
+    this.events.push({ t: 'dismount', u });
+    return true;
+  }
+
+  mount(u, h) {
+    if (u.mounted || u.mountAnim || !h) return false;
+    const k = this.freeHorses.indexOf(h);
+    if (k < 0) return false;
+    this.freeHorses.splice(k, 1);
+    // ruiter loopt naar de linkerkant van het paard
+    u.x = h.x - Math.cos(h.yaw) * 0.9;
+    u.z = h.z + Math.sin(h.yaw) * 0.9;
+    u.mountAnim = { t: 0, dir: 1, x: h.x, z: h.z, yaw: h.yaw, faction: h.def.faction, variant: h.variant, leader: h.isLeader, horse: h };
+    u.yaw = h.yaw;
+    this.events.push({ t: 'mount', u });
+    return true;
+  }
+
+  _updateHorses(dt) {
+    for (const h of this.freeHorses) {
+      h.gait += dt * 0.3;
+    }
+    for (const u of this.units) {
+      const a = u.mountAnim;
+      if (!a || !u.alive) continue;
+      a.t += dt / 0.85;
+      const k = Math.min(1, a.t);
+      u.mountT = a.dir > 0 ? k : 1 - k;
+      // zijwaarts van/naar de linkerflank
+      const side = (1 - u.mountT) * 0.95;
+      u.x = a.x - Math.cos(a.yaw) * side;
+      u.z = a.z + Math.sin(a.yaw) * side;
+      u.yaw = a.yaw;
+      if (k >= 1) {
+        u.mountAnim = null;
+        if (a.dir > 0) {
+          u.mounted = true;
+          u.mountT = 1;
+          u.x = a.x;
+          u.z = a.z;
+          u.radius = 0.85;
+          u.height = 2.75;
+          u.gait = 0;
+        } else {
+          u.mounted = false;
+          u.mountT = 0;
+          u.radius = 0.4;
+          u.height = 1.85;
+          this._freeHorse(a.x, a.z, a.yaw, a.faction, a.variant, a.leader);
+        }
+      }
+    }
   }
 
   // ------------------------------------------------------------------ weergang

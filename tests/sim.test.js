@@ -406,3 +406,53 @@ describe('weergang', () => {
     expect(p.y).toBe(0);
   });
 });
+
+describe('paard en springen', () => {
+  const mkP = (unit) => new Match({ teams: ['hungary', 'ottoman'], mode: 'ffa', troops: 'small', length: 'short', seed: 6, withPlayer: true, playerTeam: 'hungary', playerUnit: unit });
+  const step = (m, inp, n) => {
+    for (let i = 0; i < n; i++) {
+      m.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, ...inp };
+      m.update(1 / 30);
+      m.events.length = 0;
+    }
+  };
+  it('afstijgen laat het paard staan; opnieuw bestijgen kan', () => {
+    const m = mkP('hun_knight');
+    const p = m.player;
+    expect(p.mounted).toBe(true);
+    step(m, { climb: true }, 1);
+    step(m, {}, 40);
+    expect(p.mounted).toBe(false);
+    expect(m.freeHorses.length).toBeGreaterThan(0);
+    const h = m.freeHorses[m.freeHorses.length - 1];
+    const hx = h.x;
+    step(m, {}, 60);
+    expect(h.x).toBe(hx); // paard blijft staan
+    step(m, { climb: true }, 1);
+    step(m, {}, 40);
+    expect(p.mounted).toBe(true);
+    expect(m.freeHorses.includes(h)).toBe(false);
+  });
+  it('springen te voet en te paard; het paard springt hoger', () => {
+    const m = mkP('hun_knight');
+    const p = m.player;
+    let maxMounted = 0;
+    step(m, { jump: true }, 1);
+    for (let i = 0; i < 40; i++) {
+      step(m, {}, 1);
+      maxMounted = Math.max(maxMounted, p.y);
+    }
+    expect(p.y).toBe(0);
+    step(m, { climb: true }, 1);
+    step(m, {}, 40);
+    let maxFoot = 0;
+    step(m, { jump: true }, 1);
+    for (let i = 0; i < 40; i++) {
+      step(m, {}, 1);
+      maxFoot = Math.max(maxFoot, p.y);
+    }
+    expect(maxFoot).toBeGreaterThan(0.3);
+    expect(maxMounted).toBeGreaterThan(maxFoot * 1.5);
+    expect(p.y).toBe(0);
+  });
+});

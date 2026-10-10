@@ -124,7 +124,10 @@ export class Hud {
     // ladder
     let prompt = '';
     const nearPost = !p.post && !p.wall && !p.mounted && !p.siege && p.alive && match.nearestFreePost(p, 3.5);
-    if (p.wall) prompt = match.nearestLadder(p) ? (match.controlsTouch ? '⇅ = ladder af' : 'E = ladder af') : 'Op de weergang · loop naar een ladder om af te dalen';
+    const nearHorse = !p.mounted && !p.wall && !p.post && p.alive && !p.mountAnim && match.nearestFreeHorse(p, 2.8);
+    if (p.mounted && p.alive && !p.mountAnim) prompt = match.controlsTouch ? '⇅ = afstijgen' : 'E = afstijgen';
+    else if (nearHorse) prompt = match.controlsTouch ? '⇅ = paard bestijgen' : 'E = paard bestijgen';
+    else if (p.wall) prompt = match.nearestLadder(p) ? (match.controlsTouch ? '⇅ = ladder af' : 'E = ladder af') : 'Op de weergang · loop naar een ladder om af te dalen';
     else if (p.post) prompt = match.controlsTouch ? '⇅ = muur af' : 'E = muur af';
     else if (nearPost) prompt = match.controlsTouch ? '⇅ = ladder op' : 'E = de muur op';
     this.set('prompt', prompt, (v) => {

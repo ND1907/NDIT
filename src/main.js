@@ -522,7 +522,8 @@ function playerInput(dt) {
   if (A.select != null) inp.selectWeapon = A.select;
   if (A.cry) inp.cry = true;
   if (A.climb) inp.climb = true;
-  controls.actions = { switch: false, climb: false, cry: false, select: null };
+  if (A.jump) inp.jump = true;
+  controls.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
   inp.aim = null;
   if (inp.attack && p) {
     const w = p.weapons[p.wi];

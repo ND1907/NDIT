@@ -10,7 +10,7 @@ export class Controls {
     this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     this.sensitivity = 1;
     this.keys = new Set();
-    this.actions = { switch: false, climb: false, cry: false, select: null };
+    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
     this.noLock = false;
     this.freeDrag = false; // na sneuvelen: muis vrij, slepen = rondkijken
 
@@ -110,6 +110,7 @@ export class Controls {
     };
     tap('btn-switch', () => (this.actions.switch = true));
     tap('btn-climb', () => (this.actions.climb = true));
+    tap('btn-jump', () => (this.actions.jump = true));
     tap('btn-cry', () => (this.actions.cry = true));
   }
 
@@ -126,7 +127,10 @@ export class Controls {
       if (e.code === 'Digit2') this.actions.select = 1;
       if (e.code === 'KeyE' || e.code === 'KeyF') this.actions.climb = true;
       if (e.code === 'KeyR' || e.code === 'KeyG') this.actions.cry = true;
-      if (e.code === 'Space') e.preventDefault();
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (!e.repeat) this.actions.jump = true;
+      }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
@@ -196,7 +200,7 @@ export class Controls {
     this.move.x = this.move.y = 0;
     this.look.x = this.look.y = 0;
     this.firing = false;
-    this.actions = { switch: false, climb: false, cry: false, select: null };
+    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
     this.joyId = null;
     this.lookIds.clear();
     this.joyBase?.classList.remove('active');

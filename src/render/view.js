@@ -232,6 +232,16 @@ export class GameView {
       if (u.isPlayer && u.alive && this.hidePlayer) continue;
       H.add(key, d, u);
       if (u.mounted) P.add('paard:' + u.def.faction, d, u);
+      else if (u.mountAnim) P.add('paard:' + u.def.faction, d, u.mountAnim.horse);
+    }
+    // paarden zonder ruiter
+    for (const h of m.freeHorses) {
+      const d = Math.hypot(h.x - cam.x, h.z - cam.z);
+      if (d > maxD) continue;
+      _sphere.center.set(h.x, 1.2, h.z);
+      _sphere.radius = 2.5;
+      if (!_frustum.intersectsSphere(_sphere)) continue;
+      P.add('paard:' + h.def.faction, d, h);
     }
     const hPose = this.hPose;
     const info = this.info;
@@ -243,7 +253,12 @@ export class GameView {
       let x = u.x;
       let y = u.y;
       let z = u.z;
-      if (u.mounted) {
+      const mk = u.mountT ?? (u.mounted ? 1 : 0);
+      if (u.alive && !u.mounted && mk > 0) {
+        // op- of afstijgen: van de flank omhoog naar het zadel
+        y += 0.8 * Math.sin(mk * Math.PI * 0.5);
+      }
+      if (u.mounted || (!u.alive && u.fellOff)) {
         if (u.alive) y += 0.8 + Math.sin(u.gait * 2) * 0.04 * Math.min(1, u.speed / 6);
         else {
           // van het paard gevallen
@@ -264,7 +279,7 @@ export class GameView {
     const pPose = this.pPose;
     P.end((u, data, o, to) => {
       const r = poseHorse(pPose, u, time);
-      let y = u.y - (r.drop || 0) * 0.5;
+      let y = (u.y || 0) - (r.drop || 0) * 0.5;
       if (!u.alive && u.deadT > 21) y -= (u.deadT - 21) * 0.3;
       const root = setRoot(u.x, y, u.z, u.yaw, 0, r.tilt || 0, 1);
       writeBones(data, o, root, pPose, HORSE_NB);
