@@ -25,6 +25,68 @@ function cylGeo(rt, rb, h, seg, scale = TEX_M, open = false) {
   return g;
 }
 
+// Zadeldak precies op een rechthoekig huis (halve maten hx × hz, muurhoogte h):
+// nok langs de lange zijde, overstek rondom, twee dakvlakken en twee geveldriehoeken.
+// Geeft { roof, gables } (geometrie rond de oorsprong; de onderkant van het dak op y = h).
+function gableRoof(hx, hz, h, over = 0.35, pitch = 0.62) {
+  const alongX = hx >= hz;
+  const L = (alongX ? hx : hz) + over; // halve lengte langs de nok
+  const Wd = (alongX ? hz : hx) + over; // halve breedte (dakvoet)
+  const rise = (alongX ? hz : hx) * pitch * 1.6;
+  const y0 = h - 0.05;
+  // punten in (langs, hoog, dwars)
+  const P = (a, y, c) => (alongX ? [a, y, c] : [c, y, a]);
+  const pos = [];
+  const uv = [];
+  const quad = (p0, p1, p2, p3, uv0) => {
+    pos.push(...p0, ...p1, ...p2, ...p0, ...p2, ...p3);
+    uv.push(...uv0[0], ...uv0[1], ...uv0[2], ...uv0[0], ...uv0[2], ...uv0[3]);
+  };
+  const slope = Math.hypot(Wd, rise + over * pitch);
+  const yEave = y0 - over * pitch;
+  for (const sd of [-1, 1]) {
+    const a = P(-L, yEave, sd * Wd);
+    const b = P(L, yEave, sd * Wd);
+    const c = P(L, y0 + rise, 0);
+    const d = P(-L, y0 + rise, 0);
+    const U = [[0, 0], [(2 * L) / 3, 0], [(2 * L) / 3, slope / 3], [0, slope / 3]];
+    if (sd > 0) quad(a, b, c, d, U);
+    else quad(b, a, d, c, U);
+  }
+  // het verwisselen van de assen (nok langs z) spiegelt de geometrie: winding omdraaien
+  const flip = (P3, UV2) => {
+    if (alongX) return;
+    for (let t = 0; t < P3.length / 9; t++) {
+      for (let k = 0; k < 3; k++) [P3[t * 9 + 3 + k], P3[t * 9 + 6 + k]] = [P3[t * 9 + 6 + k], P3[t * 9 + 3 + k]];
+      for (let k = 0; k < 2; k++) [UV2[t * 6 + 2 + k], UV2[t * 6 + 4 + k]] = [UV2[t * 6 + 4 + k], UV2[t * 6 + 2 + k]];
+    }
+  };
+  flip(pos, uv);
+  const roof = new THREE.BufferGeometry();
+  roof.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  roof.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  roof.computeVertexNormals();
+  // geveldriehoeken in muurkleur (sluiten de zolder af)
+  const gp = [];
+  const guv = [];
+  const ga = alongX ? hx : hz;
+  const gw = alongX ? hz : hx;
+  for (const e of [-1, 1]) {
+    const p0 = P(e * ga, y0, -gw);
+    const p1 = P(e * ga, y0, gw);
+    const p2 = P(e * ga, y0 + rise * (gw / (gw + over)) + 0.02, 0);
+    if (e > 0) gp.push(...p0, ...p2, ...p1);
+    else gp.push(...p0, ...p1, ...p2);
+    guv.push(0, 0, 1, 0, 0.5, 0.5);
+  }
+  flip(gp, guv);
+  const gables = new THREE.BufferGeometry();
+  gables.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3));
+  gables.setAttribute('uv', new THREE.Float32BufferAttribute(guv, 2));
+  gables.computeVertexNormals();
+  return { roof, gables };
+}
+
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
@@ -38,6 +100,8 @@ function place(g, x, y, z, ry = 0, rx = 0, rz = 0, s = 1) {
 
 function merge(list) {
   if (!list.length) return null;
+  // gemengde lijsten (met en zonder index) eerst gelijktrekken
+  if (list.some((x) => !x.index) && list.some((x) => x.index)) list = list.map((x) => (x.index ? x.toNonIndexed() : x));
   const g = mergeGeometries(list, false);
   return g;
 }
@@ -117,32 +181,40 @@ export class WorldView {
     const col = new Float32Array(pos.count * 3);
     const n2 = (x, z) => Math.sin(x * 0.021 + Math.sin(z * 0.013) * 2) * Math.cos(z * 0.017 - Math.sin(x * 0.011) * 1.5);
     const forts = this.map.forts;
+    // natuurlijke variatie: weelderig ↔ iets droger ↔ vertrapte aarde (alle tinten ≤ 1, geen paarse/felle vlekken)
+    const lush = [0.96, 1.0, 0.94];
+    const dry = [1.04, 1.0, 0.82];
+    const earth = [0.86, 0.76, 0.6];
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
       const a = n2(x, z) * 0.5 + n2(x * 2.3 + 40, z * 2.1 - 17) * 0.3 + n2(x * 5.1, z * 4.7) * 0.15;
-      let r = 0.95 + a * 0.12;
-      let g = 0.97 + a * 0.08;
-      let b = 0.9 + a * 0.06;
-      // droog, geel gras op sommige plekken
-      const dry = Math.max(0, n2(x * 0.7 + 90, z * 0.8 - 30));
-      r += dry * 0.18;
-      g += dry * 0.06;
-      b -= dry * 0.08;
-      // vertrapte aarde rond de forten
+      const kDry = Math.max(0, Math.min(1, n2(x * 0.7 + 90, z * 0.8 - 30) * 0.9 + 0.1)) * 0.6;
+      let kEarth = 0;
       for (const f of forts) {
         const d = Math.hypot(x - f.cx, z - f.cz);
-        const k = Math.max(0, 1 - Math.abs(d - f.extent - 8) / 14) * 0.35;
-        r -= k * 0.05;
-        g -= k * 0.22;
-        b -= k * 0.18;
+        kEarth = Math.max(kEarth, Math.max(0, 1 - Math.abs(d - f.extent - 8) / 16) * 0.55);
       }
-      col[i * 3] = r;
-      col[i * 3 + 1] = g;
-      col[i * 3 + 2] = b;
+      const bright = 0.94 + a * 0.08;
+      for (let k = 0; k < 3; k++) {
+        let c = lush[k] + (dry[k] - lush[k]) * kDry;
+        c += (earth[k] - c) * kEarth;
+        col[i * 3 + k] = Math.min(1.05, c * bright);
+      }
     }
     gg.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.mats.grass.vertexColors = true;
+    this.mats.grass.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace(
+        '#include <map_fragment>',
+        `#ifdef USE_MAP
+        vec4 t1 = texture2D(map, vMapUv);
+        vec4 t2 = texture2D(map, vMapUv * 0.231 + vec2(0.37, 0.71));
+        vec4 t3 = texture2D(map, vec2(vMapUv.y, -vMapUv.x) * 0.057);
+        diffuseColor *= vec4(mix(t1.rgb, (t2.rgb + t3.rgb) * 0.5, 0.45), 1.0);
+        #endif`,
+      );
+    };
     const ground = new THREE.Mesh(gg, this.mats.grass);
     ground.receiveShadow = this.shadows;
     ground.material.map.repeat.set(size / 9, size / 9);
@@ -285,11 +357,9 @@ export class WorldView {
     for (const d of D) {
       if (d.kind === 'house') {
         walls.push(place(boxGeo(d.hx * 2, d.h, d.hz * 2, 4), d.x, d.h / 2, d.z, d.rot));
-        const roof = new THREE.CylinderGeometry(0.01, d.hx * 1.25, d.hz * 2.2, 4, 1);
-        roof.rotateY(Math.PI / 4);
-        roof.scale(1, 1, 0.75);
-        roof.rotateX(Math.PI / 2);
-        roofs.push(place(roof, d.x, d.h + d.hx * 0.45, d.z, d.rot, 0, 0));
+        const { roof, gables } = gableRoof(d.hx, d.hz, d.h);
+        roofs.push(place(roof, d.x, 0, d.z, d.rot));
+        walls.push(place(gables, d.x, 0, d.z, d.rot));
       } else if (d.kind === 'lowwall') {
         lows.push(place(boxGeo(d.hx * 2, d.h, d.hz * 2, 4), d.x, d.h / 2, d.z, d.rot));
       }
@@ -494,11 +564,9 @@ class FortView {
     // gebouwen in het fort
     for (const b of f.buildings) {
       stone.push(place(boxGeo(b.hx * 2, b.h, b.hz * 2), b.x, b.h / 2, b.z, b.rot));
-      const r = new THREE.CylinderGeometry(0.01, b.hx * 1.25, b.hz * 2.2, 4, 1);
-      r.rotateY(Math.PI / 4);
-      r.scale(1, 1, 0.7);
-      r.rotateX(Math.PI / 2);
-      roof.push(place(r, b.x, b.h + b.hx * 0.42, b.z, b.rot));
+      const gr = gableRoof(b.hx, b.hz, b.h, 0.4);
+      roof.push(place(gr.roof, b.x, 0, b.z, b.rot));
+      stone.push(place(gr.gables, b.x, 0, b.z, b.rot));
     }
     // bovendorpels/bogen boven de poorten
     for (const o of this.w.map.obstacles) {

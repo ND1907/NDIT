@@ -24,29 +24,48 @@ function tex(w, h, draw, rep = [1, 1], srgb = true) {
   return t;
 }
 
+// Naadloze grastextuur: alles wat over de rand valt wordt aan de overkant herhaald,
+// rustige kleurvariatie (geen felle vlekken).
 export function grassTexture() {
   return tex(512, 512, (g, w, h) => {
     const r = rng(7);
-    g.fillStyle = '#6d7a3c';
+    const wrap = (x, y, rad, fn) => {
+      for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) {
+        if (x + dx + rad < 0 || x + dx - rad > w || y + dy + rad < 0 || y + dy - rad > h) continue;
+        fn(x + dx, y + dy);
+      }
+    };
+    g.fillStyle = '#66773a';
     g.fillRect(0, 0, w, h);
-    // grote vlekken
-    for (let i = 0; i < 90; i++) {
+    // zachte, lage-contrast vlekken (naadloos)
+    for (let i = 0; i < 60; i++) {
       const x = r() * w;
       const y = r() * h;
-      const rad = 20 + r() * 60;
-      const grd = g.createRadialGradient(x, y, 0, x, y, rad);
-      const col = r() < 0.5 ? 'rgba(95,110,48,0.45)' : r() < 0.6 ? 'rgba(140,140,80,0.35)' : 'rgba(120,100,60,0.3)';
-      grd.addColorStop(0, col);
-      grd.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = grd;
-      g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+      const rad = 30 + r() * 70;
+      const dark = r() < 0.5;
+      wrap(x, y, rad, (px, py) => {
+        const grd = g.createRadialGradient(px, py, 0, px, py, rad);
+        grd.addColorStop(0, dark ? 'rgba(70,88,40,0.22)' : 'rgba(120,128,70,0.16)');
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grd;
+        g.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+      });
     }
-    // grassprietjes
-    for (let i = 0; i < 9000; i++) {
-      const v = r();
-      g.fillStyle = v < 0.3 ? '#5c6a2e' : v < 0.6 ? '#7d8a45' : v < 0.85 ? '#8e9450' : '#a39d62';
-      g.fillRect(r() * w, r() * h, 1 + r() * 2, 2 + r() * 3);
+    // grassprietjes in gedempte tinten
+    const cols = ['#5a6a30', '#6f7f3c', '#7a8642', '#64743a', '#848a4c'];
+    for (let i = 0; i < 14000; i++) {
+      const x = r() * w;
+      const y = r() * h;
+      const c = cols[Math.floor(r() * cols.length)];
+      const bw = 1 + r() * 1.2;
+      const bh = 3 + r() * 4;
+      wrap(x, y, 8, (px, py) => {
+        g.fillStyle = c;
+        g.globalAlpha = 0.55 + r() * 0.35;
+        g.fillRect(px, py, bw, bh);
+      });
     }
+    g.globalAlpha = 1;
   }, [60, 60]);
 }
 
