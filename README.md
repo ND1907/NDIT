@@ -22,20 +22,26 @@ vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander o
 
 - **Opzet:** kies 2–6 rijken, *historische allianties* (christenen tegen Ottomanen en hun Servische vazal)
   of *ieder voor zich*. Kies daarna moeilijkheid (makkelijk/normaal/moeilijk), lengte
-  (kort ±15, normaal ±20–25, lang ±30+ minuten) en legergrootte (klein 25, normaal 60, groot 120 per team).
-  Een kleinere alliantie krijgt automatisch meer troepen, zodat 1 tegen 2 nog een eerlijk gevecht is.
-- **Rol:** vóór elk potje kies je wat je wordt: elke soldaat uit de selectie van je rijk, of de **leider** zelf.
-  Na het sneuvelen kun je een andere rol kiezen.
+  (kort ±15, normaal ±20–25, lang ±30+ minuten) en legergrootte (klein 60, **normaal 120**, groot 160 per team).
+- **Dood is dood:** elk leger begint met precies het gekozen aantal soldaten en wordt nooit aangevuld.
+  De HUD toont per rijk de levenden (bijv. `⚔ 87/120`). Een rijk zonder soldaten ligt uit het spel;
+  een vrijwel vernietigd leger tegenover een sterkere vijand slaat op de vlucht.
+- **Rol:** vóór elk potje kies je wat je wordt: een soldaat uit je leger of de **leider** zelf. Sneuvel je, dan
+  kies je met de muis een rol (met het aantal levenden per rol) of klik je een soldaat aan op de kaart, en
+  neem je het lichaam van die levende bot over. Het leger groeit daar niet van.
+- **Muren:** via een ladder kom je op de weergang en loop je vrij over de muur (kantelen en torens houden je
+  tegen, een bres is een gat). Bij een ladder daal je af. Bots gebruiken ladders, weergangen en belegeringstorens ook.
+- **Paarden:** stijg af en op (E); een paard zonder ruiter blijft staan. Springen kan te voet en te paard.
 - **Fases:** 1 *Opmars & belegering* → 2 *Bres* (de eerste muur, toren of poort valt) → 3 *Strijd om de donjon*.
   Na 75% van de tijd begint de *finale* en is een donjon makkelijker in te nemen.
 - **Winnen:** neem de **donjon** van elke vijand in (meer aanvallers dan verdedigers in de binnenplaats;
   een levende leider telt als vier verdedigers). Loopt de tijd af, dan wint de kant met de meeste punten.
 - **Forten:** muren, torens en poorten hebben levenspunten. Zwaarden doen er bijna niets tegen. Je hebt
   stormrammen, bombardes, blijdes, mineurs of een belegeringstoren nodig.
-- **Golven:** elk rijk rekruteert om de ±24 s nieuwe troepen uit zijn mankracht. Veroverde dorpen
-  (vlaggen op het veld) geven extra inkomen. Een fort met een bres krijgt eerst extra rekruten en raakt daarna uitgeput.
+- **Aanvalsgolven:** de commandant houdt een garnizoen thuis, valt aan samen met het belegeringstuig en trekt
+  een gehavende aanvalsgolf terug om te hergroeperen. Ruiters strijden om de dorpen (vlaggen op het veld).
 - **Leiders** hebben meer levenspunten, een aura, een **strijdkreet** en een levensbalk boven het hoofd.
-  Sneuvelt een leider, dan zakt het moreel van zijn leger fors; na 2,5 minuut keert hij terug.
+  Sneuvelt een leider, dan zakt het moreel van zijn leger fors; hij komt niet terug.
 - **AI:** squads in formatie, schutters houden afstand, ruiters chargeren en draaien weg, gezette speren
   breken charges, verdedigers bemannen muren en poorten, en de commandant kiest wanneer hij aanvalt, verovert of verdedigt.
 
@@ -62,7 +68,8 @@ vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander o
 | Muis richten (klik eerst in het spel) | rechterkant slepen |
 | Linkermuisknop aanvallen / schieten | **AANVAL** ingedrukt houden |
 | Q, muiswiel, 1 / 2: wapen wisselen | ⇄ |
-| E: ladder op/af de muur (in je eigen fort) | ⇅ |
+| E: ladder op/af · paard bestijgen/afstijgen | ⇅ |
+| Spatie: springen | ⤒ |
 | R: strijdkreet (als leider) | 📯 |
 | Esc / P: pauze | ❚❚ |
 
@@ -82,6 +89,8 @@ npm install
 npm run dev          # speel in de browser (ook op je telefoon via het netwerkadres)
 npm test             # automatische tests (Vitest)
 npm run simulate -- --teams ottoman,byzantine --troops normal --length normal --seed 1
+node scripts/build-human.mjs                   # basislichaam opnieuw bouwen uit assets-src/makehuman
+node scripts/build-horse.mjs                   # paardenlichaam opnieuw bouwen
 node scripts/sweep.mjs --set pairs --seeds 2   # alle 15 tweetallen, parallel, zonder scherm
 node scripts/sweep.mjs --set multi --seeds 2   # 3–6 teams, allianties en ieder voor zich
 ```
@@ -111,10 +120,14 @@ Na elke codewijziging: `npm run cap:sync`.
 
 ## Techniek
 
-- **Three.js** voor de 3D-wereld. Alle soldaten, paarden, forten en vlaggen worden in code opgebouwd (geen externe 3D-bestanden).
+- **Three.js** voor de 3D-wereld.
+- **Soldaten:** echte menselijke lichamen uit de MakeHuman-basismesh (CC0), herposeerd en geskind met 4 botten
+  per vertex op de GPU, in 3 detailniveaus. Kleding, harnas, gezicht en haar worden per eenheidstype in de UV-ruimte
+  geschilderd (met normal map en verdikking van de geometrie). Zie `CREDITS.md` en `scripts/build-human.mjs`.
+- **Paarden:** organisch SDF-model (`scripts/build-horse.mjs`). Forten, vlaggen en wapens worden in code opgebouwd.
 - **Simulatie los van rendering:** `src/sim` is pure JavaScript zonder scherm en volledig deterministisch (seed).
   Daardoor kunnen tests en balanssimulaties honderden complete veldslagen in Node draaien.
-- **GPU-crowd-renderer:** één instanced draw call per soldaattype en LOD-niveau. De skeletten (18 botten
+- **GPU-crowd-renderer:** één instanced draw call per soldaattype en LOD-niveau. De skeletten (20 botten
   voor mensen, 12 voor paarden) staan in een datatextuur, zodat honderden soldaten soepel bewegen.
 - **Navigatie:** flow fields per doel en alliantie (in tijdsplakken berekend), obstakelraster met DDA-raycasts.
 - **Capacitor 8** verpakt dezelfde code als native app voor iOS (`ios/`) en Android (`android/`).
