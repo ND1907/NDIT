@@ -7,9 +7,6 @@ import { NavGrid, NAV_INF } from './nav.js';
 import { Commander, unitThink, unitSteer } from './ai.js';
 
 export const GRAVITY = 9.8;
-const WAVE_INTERVAL = 24;
-const LEADER_RESPAWN = 150;
-const PLAYER_RESPAWN = 6;
 const CORPSE_TIME = 25;
 
 // Afmetingen van eenheden voor botsing en treffers
@@ -21,6 +18,9 @@ function bodyOf(def) {
   return { r: def.role === 'leader' ? 0.45 : 0.4, h: def.role === 'leader' ? 2.0 : 1.85 };
 }
 
+
+// schaal voor schade aan eenheden (niet aan bouwwerken)
+const UNIT_DMG = 0.5;
 
 export class Match {
   constructor(settings) {
@@ -37,9 +37,9 @@ export class Match {
     this.teams = s.teams.map((id, i) => ({
       id, index: i, faction: FACTIONS[id],
       alliance: s.mode === 'ffa' ? id : FACTIONS[id].side,
-      alive: true, manpower: 60, morale: 70, waveT: 4 + i * 2, waveN: 0, siegeT: 70 + i * 10, siegeIdx: 0,
-      leader: null, leaderRespawnT: 0, leaderDeaths: 0, cryCd: 20,
-      stats: { kills: 0, losses: 0, recruited: 0, structDmg: 0, leaderKills: 0 },
+      alive: true, morale: 70,
+      leader: null, leaderDeaths: 0, cryCd: 20,
+      stats: { kills: 0, losses: 0, structDmg: 0, leaderKills: 0 },
       eliminatedAt: null, fort: null, units: 0,
     }));
     // als iedereen dezelfde kant heeft (bv. alleen christenen gekozen) → ieder voor zich
@@ -47,13 +47,12 @@ export class Match {
     if (allis.size < 2) for (const t of this.teams) t.alliance = t.id;
     this.teamById = Object.fromEntries(this.teams.map((t) => [t.id, t]));
     this.allianceOf = (teamId) => this.teamById[teamId].alliance;
-    // kleinere allianties krijgen meer troepen en inkomen, zodat 1 tegen 2 nog een eerlijk gevecht is
-    const allySize = {};
-    for (const t of this.teams) allySize[t.alliance] = (allySize[t.alliance] || 0) + 1;
-    const maxSize = Math.max(...Object.values(allySize));
+    // vast leger: elk team begint met precies `cap` soldaten; gesneuvelden komen nooit terug
     for (const t of this.teams) {
-      t.boost = Math.min(1.8, Math.pow(maxSize / allySize[t.alliance], 0.8));
-      t.cap = Math.round(this.cap * t.boost);
+      t.boost = 1;
+      t.cap = this.cap;
+      t.soldiers = 0;
+      t.startSoldiers = this.cap;
     }
 
     this.map = generateMap(s.teams, { seed: s.seed ?? 1453, structHp: this.length.structHp });
@@ -93,7 +92,7 @@ export class Match {
       isLeader: def.role === 'leader', isPlayer: !!opts.isPlayer,
       x, z, y: 0, vx: 0, vz: 0, yaw: t.fort.rot, pitch: 0, speed: 0,
       radius: body.r, height: body.h,
-      hp: def.hp, maxHp: def.hp, alive: true, deadT: 0,
+      hp: def.hp * (FACTIONS[team].power || 1), maxHp: def.hp * (FACTIONS[team].power || 1), alive: true, deadT: 0,
       mounted: def.mounted, siege: ['siege', 'ram', 'tower'].includes(def.role),
       weapons: def.weapons.map((w) => WEAPONS[w]), wi: 0,
       ammo: def.weapons.map((w) => WEAPONS[w].ammo ?? Infinity),
@@ -107,21 +106,29 @@ export class Match {
     };
     this.units.push(u);
     t.units++;
+    if (!u.siege) t.soldiers++;
     return u;
   }
 
   _spawnInitial() {
     for (const t of this.teams) {
       this.spawnLeader(t);
-      const n = Math.round(t.cap * 0.7);
-      this.recruit(t, n, true);
+      this.recruit(t, t.cap - t.soldiers, true);
+      // belegeringstuig staat vanaf het begin klaar (geen nieuwe bouw tijdens het potje)
+      const kinds = t.faction.siege.slice(0, 3);
+      kinds.forEach((type, i) => {
+        const y = t.fort.siegeYard;
+        const u = this.createUnit(type, t.id, y.x + (i - 1) * 7 * Math.cos(t.fort.rot), y.z - (i - 1) * 7 * Math.sin(t.fort.rot));
+        u.yaw = t.fort.rot;
+        this.makeSquad(t, [u], { kind: 'siege' });
+      });
     }
     if (this.settings.withPlayer !== false && this.settings.playerTeam) this.spawnPlayer();
   }
 
   spawnPoint(t, k = 0) {
     const sp = t.fort.spawn[k % t.fort.spawn.length];
-    return [sp.x + (this.rng() - 0.5) * 2, sp.z + (this.rng() - 0.5) * 2];
+    return [sp.x + (this.rng() - 0.5) * 6, sp.z + (this.rng() - 0.5) * 6];
   }
 
   spawnLeader(t) {
@@ -147,23 +154,55 @@ export class Match {
     return leader;
   }
 
+  // Speler aan het begin: neemt een bestaande soldaat van het gekozen type over (het leger groeit niet).
   spawnPlayer() {
     const s = this.settings;
     const t = this.teamById[s.playerTeam];
     if (!t || !t.alive) return null;
-    let u;
-    if (UNITS[s.playerUnit]?.role === 'leader') {
-      u = t.leader && t.leader.alive ? t.leader : this.spawnLeader(t);
-      t.leaderRespawnT = 0;
-    } else {
-      const [x, z] = this.spawnPoint(t, Math.floor(this.rng() * 12));
-      u = this.createUnit(s.playerUnit, t.id, x, z);
+    const u = UNITS[s.playerUnit]?.role === 'leader' && t.leader?.alive ? t.leader : this.pickBot(t.id, s.playerUnit) || this.pickBot(t.id, null);
+    return this.takeOver(u);
+  }
+
+  // Levende bots per eenheidstype (voor het keuzescherm na het sneuvelen)
+  roleCounts(teamId) {
+    const c = {};
+    for (const u of this.units) if (u.alive && u.team === teamId && !u.siege && !u.isPlayer) c[u.typeId] = (c[u.typeId] || 0) + 1;
+    return c;
+  }
+
+  // Dichtstbijzijnde levende bot van een type (of elk type) bij de vorige positie van de speler
+  pickBot(teamId, typeId) {
+    const t = this.teamById[teamId];
+    const ref = this.player && this.player.team === teamId ? this.player : t.fort.keep;
+    let best = null;
+    let bd = Infinity;
+    for (const u of this.units) {
+      if (!u.alive || u.team !== teamId || u.siege || u.isPlayer || u.climb) continue;
+      if (typeId && u.typeId !== typeId) continue;
+      const d = Math.hypot(u.x - ref.x, u.z - ref.z);
+      if (d < bd) {
+        bd = d;
+        best = u;
+      }
     }
+    return best;
+  }
+
+  // De speler neemt het lichaam van een levende bot over
+  takeOver(u) {
+    if (!u || !u.alive) return null;
+    if (this.player && this.player !== u) this.player.isPlayer = false;
+    if (u.squad) {
+      const m = u.squad.members;
+      const k = m.indexOf(u);
+      if (k >= 0) m.splice(k, 1);
+      u.squad = null;
+    }
+    if (u.ai) u.ai.target = null;
     u.isPlayer = true;
-    u.squad = null;
-    if (u.isLeader) u.cryCd = this.time;
+    if (u.isLeader) u.cryCd = Math.min(u.cryCd || 0, this.time);
     this.player = u;
-    this.playerRespawnT = 0;
+    this.events.push({ t: 'takeover', u });
     return u;
   }
 
@@ -172,7 +211,7 @@ export class Match {
     const fac = t.faction;
     let spawned = 0;
     let guard = 0;
-    while (spawned < count && guard++ < 50) {
+    while (spawned < count && guard++ < 200) {
       // type kiezen volgens de gewenste mix t.o.v. huidige aantallen
       const alive = {};
       for (const u of this.units) if (u.alive && u.team === t.id) alive[u.typeId] = (alive[u.typeId] || 0) + 1;
@@ -189,14 +228,13 @@ export class Match {
       const def = UNITS[bestType];
       const size = Math.min(count - spawned, def.mounted ? 5 : 8);
       const affordable = free ? size : Math.min(size, Math.floor(t.manpower / def.cost));
-      if (affordable < Math.min(size, 3)) break;
+      if (affordable < Math.min(size, free ? 1 : 3)) break;
       const members = [];
       for (let i = 0; i < affordable; i++) {
         const [x, z] = this.spawnPoint(t, spawned + i);
         members.push(this.createUnit(bestType, t.id, x, z));
       }
       if (!free) t.manpower -= affordable * def.cost;
-      t.stats.recruited += affordable;
       spawned += affordable;
       this.makeSquad(t, members, { kind: 'rally' });
     }
@@ -303,8 +341,6 @@ export class Match {
     }
     this._updateProjectiles(dt);
     if (this.tick % 6 === 0) this._updateCapture(dt * 6);
-    this._economy(dt);
-    this._leaders(dt);
     this._morale(dt);
     if (this.tick % 60 === 0) this._cleanup();
     this._checkVictory();
@@ -814,7 +850,8 @@ export class Match {
     }
     if (opts.head) mult *= 1.6;
     if (e.isPlayer && attacker && !attacker.isPlayer) mult *= this.diff.toPlayer;
-    const dmg = base * mult;
+    // vast leger: gevechten duren langer (eenheden halen meer klappen)
+    const dmg = base * mult * UNIT_DMG;
     e.hp -= dmg;
     e.lastHurtT = this.time;
     e.hitT = 0;
@@ -843,6 +880,7 @@ export class Match {
     u.climb = null;
     const t = this.teamById[u.team];
     t.units--;
+    if (!u.siege) t.soldiers--;
     t.stats.losses++;
     t.morale -= u.isLeader ? 0 : 0.12;
     if (attacker && attacker.team !== u.team) {
@@ -860,13 +898,11 @@ export class Match {
     }
     if (u.isLeader) {
       t.leaderDeaths++;
-      t.leaderRespawnT = LEADER_RESPAWN;
       t.morale -= 30;
       // schok: tijdelijk minder schade voor het hele team
       for (const o of this.units) if (o.alive && o.team === u.team) o.buff = { dmg: -0.15, def: -0.1, speed: 0, until: this.time + 30 };
       this.events.push({ t: 'leaderDown', team: u.team, u, by: attacker });
     }
-    if (u.isPlayer) this.playerRespawnT = u.isLeader ? 30 : PLAYER_RESPAWN;
     this.events.push({ t: 'kill', u, by: attacker, head: !!opts.head, rout: !!opts.rout });
   }
 
@@ -989,79 +1025,6 @@ export class Match {
     return true;
   }
 
-  _leaders(dt) {
-    for (const t of this.teams) {
-      if (!t.alive) continue;
-      if (t.leader && !t.leader.alive) {
-        t.leaderRespawnT -= dt;
-        if (t.leaderRespawnT <= 0) {
-          const playerIsLeader = this.player && this.player.team === t.id && this.player.isLeader;
-          const L = this.spawnLeader(t);
-          t.morale += 15;
-          if (playerIsLeader) {
-            L.isPlayer = true;
-            this.player = L;
-          }
-          this.events.push({ t: 'leaderBack', team: t.id, u: L });
-        }
-      }
-    }
-    // speler terug laten komen
-    if (this.player && !this.player.alive && this.settings.withPlayer !== false) {
-      this.playerRespawnT -= dt;
-      const t = this.teamById[this.player.team];
-      if (this.playerRespawnT <= 0 && t.alive && !this.player.isLeader) {
-        this.player.isPlayer = false;
-        this.spawnPlayer();
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------ economie
-  _economy(dt) {
-    for (const t of this.teams) {
-      if (!t.alive) continue;
-      const owned = this.map.capturePoints.filter((c) => c.owner === t.id).length;
-      // inkomen schaalt mee met de legergrootte (±3,3 man-punten/s bij 60 per team)
-      const scale = this.cap / 60;
-      let inc = (3.3 * t.faction.incomeMult * this.length.income + owned * 0.5) * scale * t.boost;
-      // laatste verdediging: een fort met een bres krijgt eerst extra rekruten, daarna raakt het uitgeput
-      if (t.fort.breached) inc *= this.time - t.fort.breachedAt < 240 ? 1.35 : 0.8;
-      const playerSide = this.player && this.allianceOf(this.player.team) === t.alliance;
-      if (!playerSide && this.settings.withPlayer !== false) inc *= this.diff.enemyIncome;
-      t.manpower = Math.min(t.manpower + inc * dt, 400 * scale * t.boost);
-      t.waveT -= dt;
-      if (t.waveT <= 0) {
-        t.waveT = t.fort.breached || this.commanders[t.index].inside > 0 ? WAVE_INTERVAL * 0.6 : WAVE_INTERVAL;
-        const free = t.cap - t.units;
-        if (free >= 3) {
-          const n = this.recruit(t, Math.min(free, Math.round(16 * t.boost)));
-          if (n > 0) {
-            t.waveN++;
-            this.events.push({ t: 'wave', team: t.id, n });
-          }
-        }
-      }
-      // belegeringsgeschut
-      t.siegeT -= dt;
-      if (t.siegeT <= 0) {
-        t.siegeT = 95 + this.rng() * 30;
-        const active = this.units.filter((u) => u.alive && u.team === t.id && u.siege).length;
-        const type = t.faction.siege[t.siegeIdx % t.faction.siege.length];
-        const def = UNITS[type];
-        if (active < 3 && t.manpower >= def.cost) {
-          t.manpower -= def.cost;
-          t.siegeIdx++;
-          const y = t.fort.siegeYard;
-          const u = this.createUnit(type, t.id, y.x, y.z);
-          u.yaw = t.fort.rot;
-          this.makeSquad(t, [u], { kind: 'siege' });
-          this.events.push({ t: 'siegeBuilt', team: t.id, u });
-        }
-      }
-    }
-  }
-
   _morale(dt) {
     for (const t of this.teams) {
       t.morale += (60 - t.morale) * 0.004 * dt;
@@ -1179,6 +1142,29 @@ export class Match {
       this.finaleAnnounced = true;
       this.events.push({ t: 'finale' });
     }
+    // een leger dat vrijwel vernietigd is en tegenover een sterkere vijand staat, slaat op de vlucht
+    for (const t of this.teams) {
+      if (!t.alive || t.soldiers <= 0 || t.soldiers > t.startSoldiers * 0.12) continue;
+      let enemy = 0;
+      for (const o of this.teams) if (o.alive && o.alliance !== t.alliance) enemy += Math.max(0, o.soldiers);
+      if (enemy > t.soldiers * 1.5 && enemy >= 4) {
+        t.routed = true;
+        this.events.push({ t: 'armyBroken', team: t.id });
+        for (const u of this.units) if (u.alive && u.team === t.id) {
+          this.kill(u, null, { rout: true });
+          u.fled = true;
+        }
+      }
+    }
+    // een team zonder soldaten ligt uit het spel
+    for (const t of this.teams) {
+      if (t.alive && t.soldiers <= 0) {
+        t.alive = false;
+        t.eliminatedAt = this.time;
+        for (const u of this.units) if (u.alive && u.team === t.id) this.kill(u, null, { rout: true });
+        this.events.push({ t: 'teamWiped', team: t.id });
+      }
+    }
     const aliveAllis = new Set(this.teams.filter((t) => t.alive).map((t) => t.alliance));
     if (aliveAllis.size <= 1) {
       this.endMatch([...aliveAllis][0] || null, 'conquest');
@@ -1229,7 +1215,7 @@ export class Match {
       teams: this.teams.map((t) => ({
         id: t.id, alliance: t.alliance, alive: t.alive, ...t.stats, morale: Math.round(t.morale),
         fortHp: Math.round((t.fort.structures.reduce((a, s) => a + s.hp, 0) / t.fort.structures.reduce((a, s) => a + s.maxHp, 0)) * 100),
-        eliminatedAt: t.eliminatedAt, leaderDeaths: t.leaderDeaths,
+        eliminatedAt: t.eliminatedAt, leaderDeaths: t.leaderDeaths, soldiers: Math.max(0, t.soldiers), startSoldiers: t.startSoldiers,
       })),
     };
   }

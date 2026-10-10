@@ -57,8 +57,15 @@
     <div id="death" class="hidden">
       <h2>GESNEUVELD</h2>
       <p id="death-text"></p>
-      <p id="death-timer"></p>
-      <button id="btn-change-role" class="ghost">Andere rol kiezen</button>
+      <p id="death-timer">Je leger telt nog <b id="death-left">0</b> soldaten. Kies wie je overneemt:</p>
+      <div id="death-roles"></div>
+      <div class="death-row">
+        <button id="btn-spec-prev" class="ghost" aria-label="Vorige soldaat">◀</button>
+        <span id="death-spec"></span>
+        <button id="btn-spec-next" class="ghost" aria-label="Volgende soldaat">▶</button>
+      </div>
+      <button id="btn-takeover" class="big">Neem deze soldaat over</button>
+      <p class="death-hint">Of klik een soldaat van je leger aan op de kaart · muis slepen = rondkijken</p>
     </div>
 
     <!-- ================= Hoofdmenu ================= -->

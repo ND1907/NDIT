@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Match } from '../src/sim/match.js';
-import { UNITS, WEAPONS, ARMOR, FACTIONS, LEADERS, FACTION_IDS } from '../src/sim/data.js';
+import { UNITS, WEAPONS, ARMOR, FACTIONS, LEADERS, FACTION_IDS, TROOP_SIZES } from '../src/sim/data.js';
 import { generateMap } from '../src/sim/map.js';
 import { makeObstacle, pushCircle, rayObstacle, pointInside } from '../src/sim/geom.js';
 import { ballistic } from '../src/sim/math.js';
@@ -185,7 +185,7 @@ describe('bouwwerken en navigatie', () => {
 });
 
 describe('leiders, inname en overwinning', () => {
-  it('leider sneuvelt: moreel daalt en hij komt later terug', () => {
+  it('leider sneuvelt: moreel daalt en hij komt niet terug', () => {
     const m = mk();
     const t = m.teamById.ottoman;
     const L = t.leader;
@@ -194,9 +194,12 @@ describe('leiders, inname en overwinning', () => {
     m.damageUnit(L, 1e6, 'slash', null, {});
     expect(L.alive).toBe(false);
     expect(t.morale).toBeLessThan(morale - 20);
-    for (let i = 0; i < 30 * 160; i++) m._leaders(1 / 30);
-    expect(t.leader.alive).toBe(true);
-    expect(t.leader).not.toBe(L);
+    for (let i = 0; i < 30 * 200; i++) {
+      m.update(1 / 30);
+      m.events.length = 0;
+    }
+    expect(t.leader).toBe(L);
+    expect(t.leader.alive).toBe(false);
   });
   it('aura van de leider verhoogt schade van nabije soldaten', () => {
     const m = mk();
@@ -272,14 +275,77 @@ describe('rekrutering', () => {
   }, 30000);
 });
 
+describe('vast leger: dood is dood', () => {
+  it('elk team begint met precies het gekozen aantal soldaten', () => {
+    for (const troops of ['small', 'normal']) {
+      const m = new Match({ teams: ['ottoman', 'byzantine', 'genoa'], mode: 'historical', troops, length: 'short', seed: 3, withPlayer: false });
+      for (const t of m.teams) {
+        const n = m.units.filter((u) => u.team === t.id && !u.siege && u.alive).length;
+        expect(n).toBe(TROOP_SIZES[troops].perTeam);
+        expect(t.soldiers).toBe(n);
+        expect(t.startSoldiers).toBe(n);
+      }
+    }
+  });
+  it('het aantal soldaten daalt alleen, nooit omhoog (hele simulatie)', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine'], mode: 'ffa', troops: 'small', length: 'short', seed: 9, withPlayer: false });
+    const prev = m.teams.map((t) => t.soldiers);
+    let maxUid = m.uid;
+    for (let i = 0; i < 30 * 60 * 6 && !m.over; i++) {
+      m.update(1 / 30);
+      m.events.length = 0;
+      if (i % 30 === 0) {
+        m.teams.forEach((t, k) => {
+          const real = m.units.filter((u) => u.team === t.id && !u.siege && u.alive).length;
+          expect(Math.max(0, t.soldiers)).toBe(real);
+          expect(real).toBeLessThanOrEqual(prev[k]);
+          prev[k] = real;
+        });
+        expect(m.uid).toBe(maxUid); // er worden geen nieuwe eenheden gemaakt
+        maxUid = m.uid;
+      }
+    }
+  }, 60000);
+  it('speler sneuvelt en neemt een bestaande bot over; het leger groeit niet', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine'], mode: 'ffa', troops: 'small', length: 'short', seed: 4, withPlayer: true, playerTeam: 'ottoman', playerUnit: 'ott_janissary' });
+    const t = m.teamById.ottoman;
+    const p = m.player;
+    expect(p.typeId).toBe('ott_janissary');
+    expect(t.soldiers).toBe(60);
+    p.spawnT = -100;
+    m.damageUnit(p, 1e6, 'slash', null, {});
+    expect(t.soldiers).toBe(59);
+    for (let i = 0; i < 30 * 20; i++) m.update(1 / 30);
+    expect(m.player).toBe(p); // geen automatische respawn
+    const counts = m.roleCounts('ottoman');
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(t.soldiers);
+    const before = t.soldiers;
+    const bot = m.pickBot('ottoman', 'ott_azap');
+    m.takeOver(bot);
+    expect(m.player).toBe(bot);
+    expect(bot.isPlayer).toBe(true);
+    expect(t.soldiers).toBe(before);
+  });
+  it('een team zonder soldaten ligt uit het spel', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine'], mode: 'ffa', troops: 'small', length: 'short', seed: 5, withPlayer: false });
+    for (const u of m.units) if (u.team === 'byzantine' && !u.siege) {
+      u.spawnT = -100;
+      m.damageUnit(u, 1e6, 'siege', null, {});
+    }
+    m.update(1 / 30);
+    expect(m.teamById.byzantine.alive).toBe(false);
+    expect(m.over).toBe(true);
+    expect(m.winner).toBe('ottoman');
+  });
+});
+
 describe('allianties', () => {
-  it('een kleinere alliantie krijgt meer troepen', () => {
+  it('alle teams even groot, ook in een ongelijke alliantie', () => {
     const m = new Match({ teams: ['ottoman', 'byzantine', 'genoa'], mode: 'historical', troops: 'small', length: 'short', seed: 3, withPlayer: false });
     const ott = m.teamById.ottoman;
     const byz = m.teamById.byzantine;
     expect(ott.alliance).not.toBe(byz.alliance);
-    expect(ott.cap).toBeGreaterThan(byz.cap);
-    expect(byz.boost).toBe(1);
+    expect(ott.cap).toBe(byz.cap);
   });
   it('vrij-voor-allen geeft iedereen dezelfde omvang', () => {
     const m = new Match({ teams: ['ottoman', 'byzantine', 'genoa'], mode: 'ffa', troops: 'small', length: 'short', seed: 3, withPlayer: false });

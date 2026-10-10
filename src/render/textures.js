@@ -249,25 +249,26 @@ export function drawFlag(g, w, h, faction) {
   g.save();
   switch (faction) {
     case 'ottoman': {
-      g.fillStyle = '#b3141f';
+      // Rode sultansbanier (al sancak) met gouden boord en zoom aan de stok. De maansikkel met
+      // ster is pas uit de 18e/19e eeuw en wordt daarom niet gebruikt.
+      g.fillStyle = '#a8141e';
       g.fillRect(0, 0, w, h);
-      g.fillStyle = '#f2ece0';
-      const cx = w * 0.42;
-      const cy = h / 2;
+      g.fillStyle = '#d9b24a';
+      g.fillRect(0, 0, w * 0.1, h);
+      const bw = h * 0.06;
+      g.fillRect(0, 0, w, bw);
+      g.fillRect(0, h - bw, w, bw);
+      g.fillRect(w - bw, 0, bw, h);
+      g.strokeStyle = '#d9b24a';
+      g.lineWidth = h * 0.025;
+      g.strokeRect(w * 0.16, h * 0.18, w * 0.78, h * 0.64);
+      // gouden ruit als sierstuk
       g.beginPath();
-      g.arc(cx, cy, h * 0.3, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#b3141f';
-      g.beginPath();
-      g.arc(cx + h * 0.08, cy, h * 0.25, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#f2ece0';
-      g.beginPath();
-      for (let i = 0; i < 10; i++) {
-        const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
-        const rr = i % 2 ? h * 0.05 : h * 0.12;
-        g.lineTo(cx + h * 0.36 + Math.cos(a) * rr, cy + Math.sin(a) * rr);
-      }
+      g.moveTo(w * 0.55, h * 0.3);
+      g.lineTo(w * 0.64, h * 0.5);
+      g.lineTo(w * 0.55, h * 0.7);
+      g.lineTo(w * 0.46, h * 0.5);
+      g.closePath();
       g.fill();
       break;
     }

@@ -75,29 +75,47 @@ export class Commander {
     const squads = m.squads.filter((s) => s.team === t.id && s.members.length);
     const ownUnits = squads.reduce((a, s) => a + s.members.length, 0);
     const field = squads.filter((s) => s.order.kind !== 'guard' && s.order.kind !== 'siege');
-    // squads die net gerekruteerd zijn verzamelen eerst
     for (const s of field) if (s.order.kind === 'rally' && s.order.since == null) s.order.since = m.time;
+
+    // ---- krachtsverhouding (het leger is eindig: elke man telt) ----
+    // alliantie tegen alliantie (bondgenoten tellen mee)
+    const enemySoldiers = enemies.filter((e) => e.alliance === target.alliance).reduce((a, e) => a + Math.max(0, e.soldiers), 0);
+    const allySoldiers = m.teams.filter((o) => o.alive && o.alliance === t.alliance).reduce((a, o) => a + Math.max(0, o.soldiers), 0);
+    const ratio = allySoldiers / Math.max(1, enemySoldiers);
+    const late = m.time > m.length.timeLimit * 0.6;
+    // veel sterker → alles op alles; veel zwakker (of laat en zwakker) → verschansen
+    const early = m.time < m.length.timeLimit * 0.25 && !target.fort.breached;
+    const allIn = !early && (ratio > 1.7 || (late && ratio > 1.1) || (target.fort.breached && ratio > 1.0));
+    const turtle = !allIn && (ratio < 0.6 || (late && ratio < 0.9));
 
     // ---- muurposten voor schutters ----
     const freePosts = fort.posts.filter((p) => !p.struct.destroyed).length;
-    let postWanted = Math.min(freePosts, Math.round(ownUnits * (0.12 + Math.min(0.2, threat / 80))));
-    // ---- verdedigingsaandeel ----
-    let defendShare = clamp(0.1 + threat / Math.max(20, ownUnits * 1.2), 0.1, 0.7);
-    // eindfase: alles op alles
-    const late = m.time > m.length.timeLimit * 0.5;
-    if (late) {
-      defendShare = Math.min(defendShare, 0.18);
-      postWanted = Math.min(postWanted, Math.round(ownUnits * 0.08));
-      this.attackGo = true;
+    let postWanted = Math.min(freePosts, Math.round(ownUnits * (0.16 + Math.min(0.2, threat / 80))));
+    // ---- garnizoen: een vast deel blijft altijd thuis ----
+    let defendShare = clamp(0.3 + threat / Math.max(20, ownUnits * 1.2), 0.3, 0.8);
+    if (allIn) {
+      // overmacht: (bijna) iedereen mee; alleen een wacht als er vijanden bij het fort zijn
+      defendShare = threat > 3 ? clamp(threat / Math.max(20, ownUnits * 1.5), 0.05, 0.4) : 0;
+      postWanted = threat > 3 ? Math.min(postWanted, Math.round(ownUnits * 0.06)) : 0;
     }
-    // vijandelijk fort heeft een bres: doorstoten
-    if (target.fort.breached && !fort.breached) defendShare = Math.min(defendShare, 0.2);
-    if (fort.breached) defendShare = Math.max(defendShare, 0.35);
+    if (turtle) defendShare = Math.max(defendShare, 0.85);
+    if (fort.breached) defendShare = Math.max(defendShare, 0.45);
     const defendWanted = Math.round(ownUnits * defendShare);
 
     // squads sorteren op afstand tot het eigen fort
     const dist = (s) => Math.hypot(s.members[0].x - fort.cx, s.members[0].z - fort.cz);
     field.sort((a, b) => dist(a) - dist(b));
+
+    // ---- lopende aanvalsgolf bewaken: zwaar gehavend → terugtrekken en hergroeperen ----
+    if (this.attackGo && this.waveStart) {
+      const attacking = field.filter((s) => s.order.kind === 'attack').reduce((a, s) => a + s.members.length, 0);
+      if (!allIn && (attacking < this.waveStart * 0.45 || t.morale < 22) && !target.fort.breached) {
+        this.attackGo = false;
+        this.retreatT = m.time;
+        for (const s of field) if (s.order.kind === 'attack') s.order = { kind: 'rally', since: m.time, retreat: true };
+        m.events.push({ t: 'retreat', team: t.id });
+      } else if (attacking < 3 && !allIn) this.attackGo = false;
+    }
 
     let posted = 0;
     let defending = 0;
@@ -106,7 +124,6 @@ export class Commander {
     for (const s of field) {
       const role = s.type.role;
       const n = s.members.length;
-      // schutters naar de muren
       // vijand binnen de muren: iedereen in de buurt naar de donjon
       if (inside > 0 && dist(s) < fort.extent + 25 && s.order.kind !== 'keep') {
         s.order = { kind: 'keep', since: m.time };
@@ -119,59 +136,56 @@ export class Commander {
           continue;
         }
       }
+      // al aanvallend: blijven aanvallen (de golf wordt hierboven bewaakt)
+      if (s.order.kind === 'attack' && this.attackGo) continue;
       if (RANGED_ROLES.has(role) || role === 'fire') {
-        const keepPost = s.order.kind === 'posts' && m.time - (s.order.since || 0) < 40 && posted < postWanted * 1.3;
-        if (keepPost || (posted < postWanted && (s.order.kind === 'rally' || s.order.kind === 'defend'))) {
+        const keepPost = s.order.kind === 'posts' && posted < postWanted * 1.3 && postWanted > 0;
+        if (keepPost || (posted < postWanted && s.order.kind !== 'attack')) {
           if (s.order.kind !== 'posts') s.order = { kind: 'posts', since: m.time };
           posted += n;
           continue;
         }
       }
       if (defending < defendWanted && role !== 'cavalry' && role !== 'sapper') {
-        if (s.order.kind !== 'attack' || dist(s) < fort.extent + 30 || threat > ownUnits * 0.5) {
-          if (s.order.kind !== 'defend') s.order = { kind: 'defend', spot: spotIdx++ % fort.defendSpots.length };
-          defending += n;
-          continue;
-        }
+        if (s.order.kind !== 'defend') s.order = { kind: 'defend', spot: spotIdx++ % fort.defendSpots.length };
+        defending += n;
+        continue;
       }
-      // veroveringspunten (bij voorkeur ruiters en lichte eenheden)
+      // veroveringspunten: ruiters
       const cps = m.map.capturePoints
         .filter((c) => !c.owner || m.allianceOf(c.owner) !== t.alliance)
         .sort((a, b) => Math.hypot(a.x - fort.cx, a.z - fort.cz) - Math.hypot(b.x - fort.cx, b.z - fort.cz));
       const cp = cps.find((c) => (capturers.get(c.id) || 0) < 1);
-      if (cp && !this.attackGo && (role === 'cavalry' || (role === 'spear' && m.rng() < 0.5)) && s.order.kind !== 'attack') {
+      if (cp && !this.attackGo && role === 'cavalry' && !turtle) {
         s.order = { kind: 'capture', cp: cp.id };
         capturers.set(cp.id, (capturers.get(cp.id) || 0) + 1);
         continue;
       }
-      if (role === 'cavalry' && s.order.kind !== 'attack') {
-        // ruiters: rooftochten op het veld, en flankeren zodra de aanval loopt
-        if (this.attackGo || m.rng() < tactics * 0.6) s.order = { kind: 'raid', team: target.id };
-        else s.order = { kind: 'rally', since: s.order.since ?? m.time };
+      if (role === 'cavalry') {
+        // ruiters: flankeren zodra de aanval loopt, anders bij het verzamelpunt
+        if (this.attackGo) s.order = { kind: 'raid', team: target.id };
+        else if (s.order.kind !== 'rally') s.order = { kind: 'rally', since: m.time };
         continue;
       }
-      // aanvalsgroep: eerst verzamelen bij het verzamelpunt
       if (this.attackGo) s.order = { kind: 'attack', team: target.id };
-      else if (s.order.kind !== 'attack') s.order = { kind: 'rally', since: s.order.since ?? m.time };
+      else if (s.order.kind !== 'rally') s.order = { kind: 'rally', since: m.time };
     }
 
-    // aanval starten als er genoeg verzameld is (of te lang gewacht)
-    const rallying = field.filter((s) => s.order.kind === 'rally');
+    // ---- aanval starten: samen met het belegeringstuig, met genoeg mannen ----
+    const rallying = field.filter((s) => s.order.kind === 'rally' && !(s.order.retreat && m.time - s.order.since < 45));
     const rallyCount = rallying.reduce((a, s) => a + s.members.length, 0);
-    const siegeReady = squads.some((s) => s.order.kind === 'siege');
-    const firstWave = this.waves === 0 && !(siegeReady || m.time > 180) && !target.fort.breached;
-    if (!this.attackGo && !firstWave) {
-      this.musterT += 2;
-      if (rallyCount >= Math.max(8, m.cap * 0.32) || (this.musterT > 75 && rallyCount >= 6)) {
+    const tf = target.fort;
+    const siegeNear = m.time > 150 && m.units.some((u) => u.alive && u.team === t.id && u.siege && Math.hypot(u.x - tf.cx, u.z - tf.cz) < tf.extent + 40);
+    const ready = siegeNear || tf.breached || m.time > 300 + this.waves * 90 || (allIn && m.time > 120);
+    const cooled = !this.retreatT || m.time - this.retreatT > 50;
+    if (!this.attackGo && !turtle && ready && cooled) {
+      if (rallyCount >= Math.max(6, t.startSoldiers * 0.22) || (allIn && rallyCount >= 3)) {
         this.waves++;
         this.attackGo = true;
-        this.musterT = 0;
+        this.waveStart = rallyCount;
         for (const s of rallying) s.order = { kind: 'attack', team: target.id };
         m.events.push({ t: 'attackWave', team: t.id, target: target.id });
       }
-    } else if (!late) {
-      const attacking = field.filter((s) => s.order.kind === 'attack').reduce((a, s) => a + s.members.length, 0);
-      if (attacking < Math.max(4, m.cap * 0.1)) this.attackGo = false;
     }
 
     // belegeringsgeschut altijd op het doel richten
@@ -182,7 +196,7 @@ export class Commander {
     if (L && L.alive && !L.isPlayer) {
       const attackers = field.filter((s) => s.order.kind === 'attack');
       if (L.hp < L.maxHp * 0.35) this.leaderMode = 'retreat';
-      else if (this.attackGo && attackers.length >= 2 && (target.fort.breached || m.time > 600)) this.leaderMode = 'attack';
+      else if (this.attackGo && attackers.length >= 2 && (target.fort.breached || allIn)) this.leaderMode = 'attack';
       else this.leaderMode = 'defend';
       this.leaderFollow = attackers[0]?.members[0] || null;
     }
@@ -659,6 +673,20 @@ function slotOffset(u, k) {
 function orderMove(m, u, dt, sp, order) {
   const sq = u.squad;
   const ai = u.ai;
+  // schutters voor een gesloten vijandelijk fort: schietpositie innemen in plaats van tegen de muur te duwen
+  if ((order.kind === 'attack' || order.kind === 'raid') && (RANGED_ROLES.has(u.role) || u.role === 'fire')) {
+    const tf = m.teamById[order.team]?.fort;
+    if (tf && !tf.breached) {
+      const d = Math.hypot(u.x - tf.cx, u.z - tf.cz);
+      const stand = tf.extent + 18 + (u.id % 5) * 2;
+      if (d < stand + 4) {
+        if (d < stand - 6) move(u, (u.x - tf.cx) / d, (u.z - tf.cz) / d, sp * 0.6);
+        else move(u, 0, 0, 0);
+        faceTo(u, tf.cx, tf.cz, dt, 3);
+        return;
+      }
+    }
+  }
   if (order.kind === 'posts') {
     if (ai.post) {
       seek(m, u, ai.post.footX, ai.post.footZ, sp, dt, 0.4, { kind: 'defend' }, u.team);

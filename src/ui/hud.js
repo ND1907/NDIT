@@ -66,11 +66,12 @@ export class Hud {
         e.cap.classList.toggle('hidden', cap <= 0.01);
         e.capI.style.width = Math.round(cap * 100) + '%';
       });
-      this.set('n' + i, t.units + '|' + t.alive, () => (e.cnt.textContent = t.alive ? `⚔ ${t.units}` : 'gevallen'));
-      const la = t.leader?.alive;
-      this.set('l' + i, la + '|' + (la ? 0 : Math.ceil(t.leaderRespawnT / 10)), () => {
+      // levende soldaten t.o.v. het begin (gaat alleen omlaag)
+      this.set('n' + i, t.soldiers + '|' + t.alive, () => (e.cnt.textContent = t.alive ? `⚔ ${Math.max(0, t.soldiers)}/${t.startSoldiers}` : 'uitgeschakeld'));
+      const la = !!t.leader?.alive;
+      this.set('l' + i, la, () => {
         e.lead.classList.toggle('down', !la);
-        e.lead.textContent = la ? '👑' : `👑 ${Math.ceil(Math.max(0, t.leaderRespawnT))}s`;
+        e.lead.textContent = la ? '👑' : '✝';
       });
       this.set('d' + i, t.alive, () => e.d.classList.toggle('dead', !t.alive));
       this.set('me' + i, p?.team === t.id, (v) => e.d.classList.toggle('me', v));
@@ -137,13 +138,9 @@ export class Hud {
       const ang = Math.atan2(this.hurtSrc.x - p.x, this.hurtSrc.z - p.z) - (match.camYaw ?? p.yaw);
       this.el['dmg-dir'].style.transform = `translate(-50%,-50%) rotate(${-ang}rad)`;
     }
-    // doodscherm
+    // doodscherm (de inhoud wordt in main.js beheerd)
     const t2 = match.teamById[p.team];
     this.set('dead', p.alive || !t2.alive, (alive) => this.el.death.classList.toggle('hidden', alive));
-    if (!p.alive && t2.alive) {
-      const wait = p.isLeader ? t2.leaderRespawnT : match.playerRespawnT;
-      this.el['death-timer'].textContent = `Terug in de strijd over ${Math.max(0, wait).toFixed(0)} s`;
-    }
   }
 
   _leaderBars(view) {
@@ -335,8 +332,14 @@ export class Hud {
           sfx.announce(mine);
           break;
         }
-        case 'leaderBack':
-          if (m.teamById[e.team].alliance === myAlli) this.announce(`${e.u.def.name} keert terug`, 'Het moreel stijgt');
+        case 'armyBroken':
+          this.announce(`Het leger van de ${FACTIONS[e.team].short} breekt!`, 'De laatste overlevenden slaan op de vlucht', m.teamById[e.team].alliance === myAlli, 2);
+          break;
+        case 'teamWiped':
+          this.announce(`${FACTIONS[e.team].name} is uitgeschakeld`, 'Geen enkele soldaat meer over', m.teamById[e.team].alliance === myAlli, 2);
+          break;
+        case 'takeover':
+          if (e.u.isPlayer) this.feed(`Je neemt het over als ${e.u.def.name}`, 'big');
           break;
         case 'structDestroyed': {
           const own = e.st.team === p?.team;
@@ -375,9 +378,6 @@ export class Hud {
         case 'attackWave':
           if (m.teamById[e.team].alliance === myAlli && e.team === p?.team) this.announce('Aanval!', `Ons leger trekt op naar de ${FACTIONS[e.target].short}`);
           else if (m.teamById[e.target]?.alliance === myAlli && e.target === p?.team) this.announce('Een vijandelijk leger nadert!', `De ${FACTIONS[e.team].short} vallen aan`, true);
-          break;
-        case 'siegeBuilt':
-          if (e.team === p?.team) this.feed(`Nieuw belegeringstuig: ${e.u.def.name}`);
           break;
         case 'cry':
           this.feed(`${uname(e.u)}: “${e.name}”`, 'big');

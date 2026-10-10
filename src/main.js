@@ -191,6 +191,7 @@ function renderRoles() {
 
 // ---------------------------------------------------------------- potje starten
 function startMatch() {
+  if (deathMode) leaveDeathMode();
   initAudio();
   show('loading');
   state = 'loading';
@@ -234,6 +235,7 @@ function pause(on) {
 }
 
 function toMenu() {
+  if (deathMode) leaveDeathMode();
   stopMusic();
   setBattleIntensity(0);
   controls.enabled = false;
@@ -244,6 +246,7 @@ function toMenu() {
 }
 
 function showResults() {
+  if (deathMode) leaveDeathMode();
   state = 'over';
   controls.enabled = false;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -256,9 +259,9 @@ function showResults() {
   const winners = match.teams.filter((t) => t.alliance === s.winner).map((t) => FACTIONS[t.id].name).join(' en ');
   const how = s.reason === 'time' ? 'De tijd is om — de sterkste partij wint op punten.' : 'De laatste donjon is ingenomen.';
   $('res-sub').textContent = `${winners || 'Niemand'} ${match.teams.filter((t) => t.alliance === s.winner).length > 1 ? 'winnen' : 'wint'} na ${Math.floor(s.time / 60)} min ${Math.floor(s.time % 60)} s. ${how}`;
-  let html = '<table class="res-table"><tr><th>Rijk</th><th>Kills</th><th>Verliezen</th><th>Gerekruteerd</th><th>Fort</th><th>Leider gesneuveld</th><th>Status</th></tr>';
+  let html = '<table class="res-table"><tr><th>Rijk</th><th>Kills</th><th>Verliezen</th><th>Over</th><th>Fort</th><th>Leider gesneuveld</th><th>Status</th></tr>';
   for (const t of s.teams) {
-    html += `<tr class="${t.alive ? '' : 'fallen'}"><td><img alt="" src="${flagDataURL(t.id, 48, 30)}">${FACTIONS[t.id].name}</td><td>${t.kills}</td><td>${t.losses}</td><td>${t.recruited}</td><td>${t.fortHp}%</td><td>${t.leaderDeaths}×</td><td>${t.alive ? 'staat' : `gevallen (${Math.floor(t.eliminatedAt / 60)} min)`}</td></tr>`;
+    html += `<tr class="${t.alive ? '' : 'fallen'}"><td><img alt="" src="${flagDataURL(t.id, 48, 30)}">${FACTIONS[t.id].name}</td><td>${t.kills}</td><td>${t.losses}</td><td>${t.soldiers}/${t.startSoldiers}</td><td>${t.fortHp}%</td><td>${t.leaderDeaths ? 'ja' : 'nee'}</td><td>${t.alive ? 'staat' : `gevallen (${Math.floor(t.eliminatedAt / 60)} min)`}</td></tr>`;
   }
   html += '</table>';
   $('res-table').innerHTML = html;
@@ -300,12 +303,113 @@ $('btn-start').onclick = () => {
   }
   startMatch();
 };
-$('btn-change-role').onclick = (e) => {
+// ---------------------------------------------------------------- na het sneuvelen: een bot overnemen
+let deathMode = false;
+let deathRenderT = 0;
+let deathPick = null; // gekozen type, of null = gevolgde soldaat
+function teamBots() {
+  const p = match.player;
+  return match.units.filter((u) => u.alive && u.team === p.team && !u.siege && !u.isPlayer);
+}
+function setSpectate(u) {
+  view.spectate = u;
+  if (u) {
+    camYaw = u.yaw;
+    $('death-spec').textContent = `${u.def.name}${u.isLeader ? ' 👑' : ''} · ${Math.round(u.hp)}/${u.maxHp} leven`;
+  } else $('death-spec').textContent = '—';
+}
+function cycleSpectate(dir) {
+  const list = teamBots().filter((u) => !deathPick || u.typeId === deathPick);
+  if (!list.length) return setSpectate(null);
+  const ref = match.player;
+  list.sort((a, b) => Math.hypot(a.x - ref.x, a.z - ref.z) - Math.hypot(b.x - ref.x, b.z - ref.z));
+  const i = list.indexOf(view.spectate);
+  setSpectate(list[(i + dir + list.length) % list.length] || list[0]);
+}
+function enterDeathMode() {
+  deathMode = true;
+  deathPick = null;
+  controls.freeDrag = true;
+  controls.firing = false;
+  document.body.classList.add('dead-mode');
+  if (document.pointerLockElement) document.exitPointerLock();
+  cycleSpectate(0);
+  renderDeathPanel();
+}
+function leaveDeathMode() {
+  deathMode = false;
+  controls.freeDrag = false;
+  document.body.classList.remove('dead-mode');
+  view.spectate = null;
+}
+function renderDeathPanel() {
+  const p = match.player;
+  const t = match.teamById[p.team];
+  const counts = match.roleCounts(p.team);
+  $('death-left').textContent = Math.max(0, t.soldiers);
+  const ids = [...t.faction.roster, LEADERS[t.id].unit];
+  const box = $('death-roles');
+  box.innerHTML = '';
+  for (const id of ids) {
+    const n = counts[id] || 0;
+    const b = document.createElement('button');
+    b.className = deathPick === id ? 'on' : '';
+    b.disabled = n === 0;
+    b.innerHTML = `${UNITS[id].role === 'leader' ? '👑 ' : ''}${UNITS[id].name}<b>${n}</b>`;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      sfx.ui();
+      deathPick = id;
+      setSpectate(match.pickBot(p.team, id));
+      renderDeathPanel();
+    };
+    box.appendChild(b);
+  }
+}
+function doTakeOver(u) {
+  if (!u || !u.alive || u.team !== match.player.team) return;
+  match.takeOver(u);
+  camYaw = u.yaw;
+  leaveDeathMode();
+  controls.lock();
+}
+$('btn-spec-prev').onclick = (e) => {
   e.stopPropagation();
-  roleMode = 'respawn';
-  renderRoles();
-  show('role');
+  cycleSpectate(-1);
 };
+$('btn-spec-next').onclick = (e) => {
+  e.stopPropagation();
+  cycleSpectate(1);
+};
+$('btn-takeover').onclick = (e) => {
+  e.stopPropagation();
+  sfx.ui();
+  doTakeOver(view.spectate && view.spectate.alive ? view.spectate : match.pickBot(match.player.team, deathPick));
+};
+// soldaat aanklikken op de minimap
+$('minimap').addEventListener('pointerdown', (e) => {
+  if (!deathMode) return;
+  e.stopPropagation();
+  const r = e.currentTarget.getBoundingClientRect();
+  const S = e.currentTarget.width;
+  const k = hud.mmScale * (r.width / S);
+  const x = (e.clientX - r.left - r.width / 2) / k;
+  const z = (e.clientY - r.top - r.height / 2) / k;
+  let best = null;
+  let bd = 25;
+  for (const u of teamBots()) {
+    const d = Math.hypot(u.x - x, u.z - z);
+    if (d < bd) {
+      bd = d;
+      best = u;
+    }
+  }
+  if (best) {
+    setSpectate(best);
+    deathPick = null;
+    renderDeathPanel();
+  }
+});
 $('btn-help').onclick = () => show('help');
 $('btn-settings').onclick = () => {
   renderSettings();
@@ -376,13 +480,18 @@ function rebuildView() {
 
 // pauze bij Esc / verlies van muisvergrendeling / app naar achtergrond
 document.addEventListener('pointerlockchange', () => {
-  if (!document.pointerLockElement && state === 'playing' && !controls.isTouch && !controls.noLock) pause(true);
+  if (!document.pointerLockElement && state === 'playing' && !controls.isTouch && !controls.noLock && !deathMode) pause(true);
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === 'playing') pause(true);
 });
 window.addEventListener('keydown', (e) => {
   if ((e.code === 'Escape' || e.code === 'KeyP') && state === 'playing' && !document.pointerLockElement) pause(true);
+  else if (deathMode && state === 'playing') {
+    if (e.code === 'KeyQ' || e.code === 'ArrowLeft') cycleSpectate(-1);
+    if (e.code === 'KeyE' || e.code === 'ArrowRight') cycleSpectate(1);
+    if (e.code === 'Enter' || e.code === 'Space') $('btn-takeover').click();
+  }
   else if (e.code === 'KeyP' && state === 'paused') pause(false);
 });
 document.addEventListener('pointerdown', () => initAudio(), { once: true });
@@ -474,6 +583,21 @@ function frame(now) {
     }
     ev.length = 0;
     if (state === 'playing' && (match.over || (match.player && !match.teamById[match.player.team].alive))) showResults();
+    // gesneuveld: overnamescherm
+    if (state === 'playing' && match.player) {
+      const dead = !match.player.alive && match.teamById[match.player.team].alive;
+      if (dead && !deathMode) enterDeathMode();
+      else if (!dead && deathMode) leaveDeathMode();
+      if (deathMode) {
+        if (!view.spectate || !view.spectate.alive) cycleSpectate(0);
+        deathRenderT -= dt;
+        if (deathRenderT <= 0) {
+          deathRenderT = 0.5;
+          renderDeathPanel();
+          if (view.spectate) setSpectate(view.spectate);
+        }
+      }
+    }
     if (state === 'menu' && match.over) startAttract();
   }
   if (match) {

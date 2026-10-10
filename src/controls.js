@@ -12,6 +12,7 @@ export class Controls {
     this.keys = new Set();
     this.actions = { switch: false, climb: false, cry: false, select: null };
     this.noLock = false;
+    this.freeDrag = false; // na sneuvelen: muis vrij, slepen = rondkijken
 
     this.joyBase = document.getElementById('joy-base');
     this.joyKnob = document.getElementById('joy-knob');
@@ -136,7 +137,7 @@ export class Controls {
     document.addEventListener('pointerlockerror', () => (this.noLock = true));
     host.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
-      if (document.pointerLockElement !== host && !this.noLock) {
+      if (document.pointerLockElement !== host && !this.noLock && !this.freeDrag) {
         this.lock();
         return;
       }
@@ -151,7 +152,7 @@ export class Controls {
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.enabled) return;
-      if (document.pointerLockElement === host || (this.noLock && e.buttons)) {
+      if (document.pointerLockElement === host || ((this.noLock || this.freeDrag) && e.buttons)) {
         this.look.x += e.movementX * 0.8;
         this.look.y += e.movementY * 0.8;
       }

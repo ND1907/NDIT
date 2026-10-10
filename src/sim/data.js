@@ -48,7 +48,7 @@ export const WEAPONS = {
   javelin:   { name: 'Werpspiezen', kind: 'thrown', proj: 'javelin', dmg: 'pierce', damage: 42, cooldown: 2.2, range: 32, speed: 30, spread: 0.03, ammo: 4, anim: 'throw', model: 'javelin' },
   greekfire: { name: 'Grieks vuur', kind: 'spray', dmg: 'fire', damage: 9, cooldown: 4.5, range: 11, cone: 0.42, duration: 1.2, burn: 4, ammo: 12, anim: 'siphon', model: 'siphon' },
   // --- belegeringsgeschut (bemand door de eenheid zelf) ---
-  bombard:   { name: 'Bombarde', kind: 'siege', proj: 'cannonball', dmg: 'siege', damage: 1100, unitDamage: 140, splash: 3.2, cooldown: 26, range: 230, speed: 115, spread: 0.012, anim: 'none', model: 'none' },
+  bombard:   { name: 'Bombarde', kind: 'siege', proj: 'cannonball', dmg: 'siege', damage: 1100, unitDamage: 140, splash: 3.2, cooldown: 32, range: 230, speed: 115, spread: 0.012, anim: 'none', model: 'none' },
   trebuchet: { name: 'Blijde', kind: 'siege', proj: 'stone', dmg: 'siege', damage: 650, unitDamage: 110, splash: 3.6, cooldown: 15, range: 165, speed: 48, lob: true, spread: 0.02, anim: 'none', model: 'none' },
   ram:       { name: 'Stormram', kind: 'melee', dmg: 'siege', damage: 340, cooldown: 3.2, windup: 0.8, reach: 4.5, anim: 'none', model: 'none', structOnly: true },
 };
@@ -166,7 +166,7 @@ export const LEADERS = {
 export const FACTIONS = {
   ottoman: {
     id: 'ottoman', name: 'Ottomaanse Rijk', short: 'Ottomanen', color: '#b3141f', color2: '#e8d9b0', ui: '#e24a3f', side: 'ottoman',
-    fortStyle: 'ottoman', incomeMult: 1.1,
+    fortStyle: 'ottoman', incomeMult: 1.1, power: 1.42,
     style: 'Grootste leger, Turkse bogen, sipahi-ruiters en de enorme bombardes van Urban.',
     roster: ['ott_janissary', 'ott_tufekci', 'ott_azap', 'ott_sipahi'],
     mix: { ott_azap: 0.35, ott_janissary: 0.32, ott_tufekci: 0.13, ott_sipahi: 0.2 },
@@ -174,7 +174,7 @@ export const FACTIONS = {
   },
   byzantine: {
     id: 'byzantine', name: 'Byzantijnse Rijk', short: 'Byzantijnen', color: '#5b1a7a', color2: '#d4a72c', ui: '#a35ad6', side: 'christian',
-    fortStyle: 'byzantine', incomeMult: 1.0,
+    fortStyle: 'byzantine', incomeMult: 1.0, power: 0.92,
     style: 'Verdedigers: dubbele Theodosiaanse muren met gracht, Grieks vuur en zware kataphrakten.',
     roster: ['byz_skoutatos', 'byz_toxotes', 'byz_siphon', 'byz_kataphrakt'],
     mix: { byz_skoutatos: 0.42, byz_toxotes: 0.33, byz_siphon: 0.1, byz_kataphrakt: 0.15 },
@@ -182,7 +182,7 @@ export const FACTIONS = {
   },
   genoa: {
     id: 'genoa', name: 'Republiek Genua', short: 'Genuezen', color: '#c8102e', color2: '#f2f0ea', ui: '#ff6b6b', side: 'christian',
-    fortStyle: 'genoa', incomeMult: 0.72,
+    fortStyle: 'genoa', incomeMult: 0.72, power: 0.95,
     style: 'Beroemde kruisboogschutters achter pavese-schilden en zwaar gepantserde men-at-arms.',
     roster: ['gen_balestriere', 'gen_lanciere', 'gen_armigero'],
     mix: { gen_balestriere: 0.42, gen_lanciere: 0.33, gen_armigero: 0.25 },
@@ -190,7 +190,7 @@ export const FACTIONS = {
   },
   venice: {
     id: 'venice', name: 'Republiek Venetië', short: 'Venetianen', color: '#8e1b1b', color2: '#e3b23c', ui: '#f0a63a', side: 'christian',
-    fortStyle: 'venice', incomeMult: 0.9,
+    fortStyle: 'venice', incomeMult: 0.9, power: 0.9,
     style: 'Kruisbogen en vroege handkanonnen, mariniers met hellebaarden en condottieri-ruiters.',
     roster: ['ven_balestriere', 'ven_schioppo', 'ven_marinaio', 'ven_cavaliere'],
     mix: { ven_balestriere: 0.3, ven_schioppo: 0.15, ven_marinaio: 0.38, ven_cavaliere: 0.17 },
@@ -198,7 +198,7 @@ export const FACTIONS = {
   },
   serbia: {
     id: 'serbia', name: 'Servisch Despotaat', short: 'Serviërs', color: '#9b1c1c', color2: '#f4f1ea', ui: '#ff8f70', side: 'ottoman',
-    fortStyle: 'serbia', incomeMult: 1.45,
+    fortStyle: 'serbia', incomeMult: 1.45, power: 1.44,
     style: 'Sterke lansruiters en de mijnwerkers van Novo Brdo die muren ondergraven.',
     roster: ['srb_lancer', 'srb_pesak', 'srb_strelac', 'srb_miner'],
     mix: { srb_pesak: 0.38, srb_strelac: 0.27, srb_lancer: 0.25, srb_miner: 0.1 },
@@ -206,7 +206,7 @@ export const FACTIONS = {
   },
   hungary: {
     id: 'hungary', name: 'Koninkrijk Hongarije', short: 'Hongaren', color: '#1d5a32', color2: '#c8102e', ui: '#5fcf7f', side: 'christian',
-    fortStyle: 'hungary', incomeMult: 1.26,
+    fortStyle: 'hungary', incomeMult: 1.26, power: 0.96,
     style: 'Zware ridders, lichte ruiters, piekeniers, kruisboog- en haakbusschutters (naar Hussitisch voorbeeld).',
     roster: ['hun_knight', 'hun_light', 'hun_pike', 'hun_crossbow', 'hun_puskas'],
     mix: { hun_pike: 0.3, hun_crossbow: 0.2, hun_puskas: 0.16, hun_light: 0.18, hun_knight: 0.16 },
@@ -219,16 +219,16 @@ export const FACTION_IDS = ['ottoman', 'byzantine', 'genoa', 'venice', 'serbia',
 // Instellingen
 // ---------------------------------------------------------------------------
 export const TROOP_SIZES = {
-  small:  { label: 'Klein (±25 per team)', perTeam: 25 },
-  normal: { label: 'Normaal (±60 per team)', perTeam: 60 },
-  large:  { label: 'Groot (±120 per team)', perTeam: 120 },
+  small:  { label: 'Klein (60 per team)', perTeam: 60 },
+  normal: { label: 'Normaal (120 per team)', perTeam: 120 },
+  large:  { label: 'Groot (160 per team)', perTeam: 160 },
 };
 
 // Potjeslengte: schaalt muur-/poortsterkte, inname-tijd, inkomen en tijdslimiet.
 export const MATCH_LENGTHS = {
-  short:  { label: 'Kort (±10 min)', structHp: 0.6, capture: 0.7, income: 1.25, timeLimit: 15 * 60 },
-  normal: { label: 'Normaal (±20 min)', structHp: 1.0, capture: 1.0, income: 1.0, timeLimit: 30 * 60 },
-  long:   { label: 'Lang (±30 min)', structHp: 1.5, capture: 1.35, income: 0.85, timeLimit: 45 * 60 },
+  short:  { label: 'Kort (±10 min)', structHp: 1.0, capture: 0.7, income: 1, timeLimit: 15 * 60 },
+  normal: { label: 'Normaal (±20 min)', structHp: 1.8, capture: 1.0, income: 1, timeLimit: 30 * 60 },
+  long:   { label: 'Lang (±30 min)', structHp: 2.6, capture: 1.35, income: 1, timeLimit: 45 * 60 },
 };
 
 export const DIFFICULTIES = {

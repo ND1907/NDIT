@@ -223,6 +223,17 @@ body[data-w='melee'] #crosshair { opacity: 0.4; }
 #death h2 { font-size: 44px; color: #ff6a50; letter-spacing: 6px; text-shadow: 0 3px 10px #000; }
 #death p { margin: 4px; font-size: 16px; font-weight: 700; text-shadow: 0 1px 3px #000; }
 #death button { pointer-events: auto; margin-top: 10px; }
+#death { justify-content: flex-end; padding-bottom: 7vh; background: linear-gradient(180deg, rgba(60, 0, 0, 0.1), rgba(30, 0, 0, 0.55)); }
+#death-roles { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 92vw; margin-top: 6px; }
+#death-roles button { pointer-events: auto; margin: 0; padding: 7px 11px; font-size: 13px; background: var(--panel2); border: 1px solid rgba(201, 162, 74, 0.5); border-radius: 7px; color: var(--parch); }
+#death-roles button b { color: var(--brass); margin-left: 6px; }
+#death-roles button:disabled { opacity: 0.35; cursor: not-allowed; }
+#death-roles button.on { border-color: var(--brass); box-shadow: 0 0 0 2px rgba(201, 162, 74, 0.35); }
+.death-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.death-row button { margin: 0 !important; padding: 6px 12px; }
+#death-spec { min-width: 220px; font-weight: 700; text-shadow: 0 1px 3px #000; }
+.death-hint { font-size: 12px !important; opacity: 0.8; font-weight: 400 !important; }
+body.dead-mode #minimap { pointer-events: auto; cursor: crosshair; outline: 2px solid var(--brass); }
 
 #rotate-hint { display: none; position: fixed; inset: 0; z-index: 50; background: var(--ink); align-items: center; justify-content: center; font-size: 22px; color: var(--brass); }
 @media (orientation: portrait) and (pointer: coarse) { body.in-game #rotate-hint { display: flex; } }

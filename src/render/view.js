@@ -310,12 +310,24 @@ export class GameView {
     let side = p.mounted ? 0.55 : 0.75;
     let height = p.mounted ? 2.55 : 1.75;
     if (!p.alive) {
-      // langzaam rond het gevallen lichaam draaien
-      yaw = cs.yaw + time * 0.15;
-      pitch = -0.45;
-      dist = 7;
-      side = 0;
-      height = 0.8;
+      const s = this.spectate && this.spectate.alive ? this.spectate : null;
+      if (s) {
+        // een teamgenoot volgen (vrij rondkijken met de muis)
+        tx = s.x;
+        ty = s.y;
+        tz = s.z;
+        dist = s.mounted ? 6.5 : 5;
+        side = 0;
+        height = s.mounted ? 2.6 : 1.9;
+        pitch = Math.min(pitch, -0.12);
+      } else {
+        // rond het gevallen lichaam
+        yaw = cs.yaw + time * 0.15;
+        pitch = -0.45;
+        dist = 7;
+        side = 0;
+        height = 0.8;
+      }
     }
     const cp = Math.cos(pitch);
     const dir = new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
@@ -326,7 +338,7 @@ export class GameView {
     let d = hit ? Math.max(0.4, hit.t - 0.35) : dist;
     if (pivot.y + back.y * d < 0.3) d = Math.max(0.4, (pivot.y - 0.3) / Math.max(0.01, -back.y));
     cam.position.copy(pivot).addScaledVector(back, d);
-    this.hidePlayer = d < (p.mounted ? 2.2 : 1.5);
+    this.hidePlayer = p.alive && d < (p.mounted ? 2.2 : 1.5);
     cam.lookAt(pivot.clone().addScaledVector(dir, 30));
     this.focus = (this.focus || new THREE.Vector3()).set(tx, 0, tz);
     this.camDir = dir;
