@@ -77,7 +77,7 @@ export class CrowdRenderer {
     const low = this.quality === 'low';
     const opts = { vertexColors: true };
     if (maps?.map) opts.map = maps.map;
-    if (maps?.normalMap && !low) {
+    if (maps?.normalMap && !low && !globalThis.__noNormal) {
       opts.normalMap = maps.normalMap;
       opts.normalScale = new THREE.Vector2(0.9, 0.9);
     }

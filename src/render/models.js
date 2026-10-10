@@ -277,7 +277,7 @@ function skirtGeo(k, lod) {
       for (let a = 0; a <= nA; a++) {
         const ang = open / 2 + (a / nA) * (Math.PI * 2 - open);
         const fold = 1 + Math.sin(ang * (k.folds || 11) + 0.6) * 0.035 * t * t + (k.lames ? (((r % 2) * 0.012) / radius(y)) : 0);
-        const rr = radius(y) * fold - sh * 0.005 + (k.t || 0);
+        const rr = radius(y) * fold - sh * 0.014 + (k.t || 0);
         const x = Math.sin(ang) * rr;
         const z = Math.cos(ang) * rr * (y > 0.82 ? 0.72 : 0.72 + (0.82 - y) * 0.4) + cz;
         pos.push(x, y, z);
@@ -293,7 +293,7 @@ function skirtGeo(k, lod) {
         const side = Math.max(0, Math.min(1, 0.5 + x / 0.24));
         skin.push(HB.PELVIS, HB.THIGH_L, HB.THIGH_R, 0);
         wts.push(1 - wt, wt * side, wt * (1 - side), 0);
-        uvs.push(sw[0] + 0.004 + (sw[2] - sw[0] - 0.008) * tri(ang * 0.6), sw[1] + 0.004 + (sw[3] - sw[1] - 0.008) * tri(y * 2.2));
+        uvs.push(sw[0] + 0.008 + (sw[2] - sw[0] - 0.016) * tri(ang * 0.6), sw[1] + 0.008 + (sw[3] - sw[1] - 0.016) * tri(y * 2.2));
       }
     }
     for (let r = 0; r < nR; r++) {
@@ -629,21 +629,33 @@ function shield(b, kind, S) {
     }
   } else if (em === 'kalkan') { // Ottomaans gevlochten schild: concentrische banden
     for (let i = 1; i <= 3; i++) b.torus(B, 0.08 * i + 0.02, 0.012, ec, { p: [0, 0, zf - 0.008], seg: 18 });
-  } else if (em === 'lion') { // gevleugelde leeuw van San Marco (gestileerd)
-    b.box(B, 0.24, 0.1, 0.01, ec, { p: [0, 0.05 + (kind === 'pavise' ? 0.15 : 0), zf + 0.03] });
-    b.sph(B, 0.065, ec, { p: [0.12, 0.14 + (kind === 'pavise' ? 0.15 : 0), zf + 0.03], s: [1, 1, 0.15] });
-    b.box(B, 0.22, 0.05, 0.01, ec, { p: [-0.03, 0.2 + (kind === 'pavise' ? 0.15 : 0), zf + 0.03], r: [0, 0, 0.6] });
-    b.box(B, 0.025, 0.12, 0.01, ec, { p: [-0.08, -0.05 + (kind === 'pavise' ? 0.15 : 0), zf + 0.03] });
-    b.box(B, 0.025, 0.12, 0.01, ec, { p: [0.08, -0.05 + (kind === 'pavise' ? 0.15 : 0), zf + 0.03] });
-  } else if (em === 'eagle') { // dubbelkoppige adelaar (gestileerd)
-    b.box(B, 0.07, 0.26, 0.01, ec, { p: [0, 0.0, zf] });
-    b.box(B, 0.34, 0.07, 0.01, ec, { p: [0, 0.04, zf] });
-    b.box(B, 0.13, 0.045, 0.01, ec, { p: [-0.12, 0.13, zf], r: [0, 0, 0.6] });
-    b.box(B, 0.13, 0.045, 0.01, ec, { p: [0.12, 0.13, zf], r: [0, 0, -0.6] });
-    b.sph(B, 0.032, ec, { p: [-0.05, 0.17, zf], s: [1, 1, 0.3] });
-    b.sph(B, 0.032, ec, { p: [0.05, 0.17, zf], s: [1, 1, 0.3] });
-    b.box(B, 0.12, 0.05, 0.01, ec, { p: [0, -0.15, zf] });
-  } else if (em === 'stripes') { // Árpád-strepen
+  } else if (em === 'lion') { // gevleugelde leeuw van San Marco (zijaanzicht, gaand, met boek en aureool)
+    const oy = kind === 'pavise' ? 0.18 : 0;
+    const zz = zf + (kind === 'pavise' ? 0.03 : 0);
+    const L2 = (w, h, x, y, r = 0) => b.box(B, w, h, 0.01, ec, { p: [x, y + oy, zz], r: [0, 0, r] });
+    L2(0.24, 0.085, -0.01, 0.0); // romp
+    b.sph(B, 0.07, ec, { p: [0.13, 0.07 + oy, zz], s: [1, 1, 0.12] }); // kop met manen
+    b.sph(B, 0.03, ec, { p: [0.19, 0.06 + oy, zz], s: [1, 0.8, 0.12] }); // snuit
+    for (const [x, r] of [[-0.1, 0.15], [-0.06, -0.1], [0.06, 0.12], [0.1, -0.15]]) L2(0.025, 0.12, x, -0.09, r); // poten
+    L2(0.13, 0.02, -0.17, 0.05, 0.9); // staart
+    b.sph(B, 0.02, ec, { p: [-0.21, 0.12 + oy, zz], s: [1, 1, 0.12] });
+    for (let k = 0; k < 4; k++) L2(0.05, 0.16 - k * 0.025, -0.06 + k * 0.035, 0.13 + k * 0.01, -0.5 - k * 0.12); // vleugel (veren)
+    b.torus(B, 0.06, 0.007, ec, { p: [0.13, 0.08 + oy, zz + 0.002], seg: 16 }); // aureool
+    b.box(B, 0.06, 0.075, 0.012, '#f2efe6', { p: [0.2, -0.04 + oy, zz + 0.004] }); // open boek
+  } else if (em === 'eagle') { // dubbelkoppige adelaar
+    const zz = zf + (kind === 'pavise' ? 0.03 : 0);
+    const E2 = (w, h, x, y, r = 0) => b.box(B, w, h, 0.01, ec, { p: [x, y, zz], r: [0, 0, r] });
+    b.sph(B, 0.06, ec, { p: [0, 0.0, zz], s: [0.85, 1.4, 0.12] }); // lijf
+    for (const sd of [-1, 1]) {
+      E2(0.03, 0.12, sd * 0.045, 0.12, sd * -0.45); // hals
+      b.sph(B, 0.03, ec, { p: [sd * 0.08, 0.18, zz], s: [1, 1, 0.12] }); // kop
+      E2(0.04, 0.015, sd * 0.11, 0.18, 0); // snavel
+      // gespreide vleugel: vijf slagpennen
+      for (let k = 0; k < 5; k++) E2(0.032, 0.2 - k * 0.025, sd * (0.08 + k * 0.035), 0.05 + k * 0.012, sd * (0.55 - k * 0.12));
+      E2(0.025, 0.09, sd * 0.03, -0.12, sd * 0.35); // poten
+    }
+    E2(0.1, 0.06, 0, -0.12); // staart
+  } else if (em === 'stripes') {  } else if (em === 'stripes') { // Árpád-strepen
     for (let i = 0; i < 4; i++) b.box(B, 0.38, 0.055, 0.01, ec, { p: [0, -0.15 + i * 0.12 + (kind === 'pavise' ? 0.2 : 0), zf + (kind === 'pavise' ? 0.035 : 0)] });
   } else if (em === 'raven') { // raaf van Hunyadi met gouden ring
     b.sph(B, 0.085, ec, { p: [0, 0.02, zf], s: [1.4, 0.8, 0.15] });
@@ -1183,7 +1195,11 @@ export function buildHorseModel(faction, lod) {
   for (const s2 of [-1, 1]) b.box(B, 0.02, 0.4, 0.03, '#2a1a10', { p: [s2 * 0.2, 0.25, 0.05], mat: 'leather', detail: true });
   if (D.mail) b.cyl(PB.NECK, 0.22, 0.29, 0.7, '#7d838c', { p: [0, 0.3, 0.06], r: [0.55, 0, 0], metal: 0.7, s: [0.85, 1, 1], open: true });
   if (D.plate) b.box(PB.HEAD, 0.17, 0.05, 0.42, '#b5bcc6', { p: [0, 0.06, 0.18], r: [-0.85, 0, 0], metal: 1 });
-  if (D.plume) b.cone(PB.HEAD, 0.04, 0.22, D.plume, { p: [0, 0.3, -0.02], seg: 5 });
+  if (D.plume) {
+    // kwast (püskül) achter de oren, naar achteren hangend
+    b.sph(PB.HEAD, 0.035, '#c9a24a', { p: [0, 0.16, -0.04], metal: 0.8 });
+    b.cone(PB.HEAD, 0.05, 0.2, D.plume, { p: [0, 0.12, -0.14], r: [2.2, 0, 0], seg: 6, mat: 'fur' });
+  }
   return b.build();
 }
 

@@ -392,8 +392,15 @@ export const LAYERS = {
     if (armPart(q.part) && (o.sleeves ?? 'long') === 'long' && q.y < BODY.wrist + 0.05 && o.cuff) c = o.cuff;
     if (o.hem && torsoParts(q.part) && q.y < (o.bottom ?? BODY.crotch) + 0.025) c = o.hem;
     if (o.brocade && !armPart(q.part)) {
-      const s = Math.sin(q.x * 160) * Math.sin(q.y * 160) + Math.sin((q.x + q.y) * 110) * 0.6;
-      if (s > 0.9) c = mixc(c, o.brocade, 0.75);
+      // brokaat: zacht granaatappelmotief (geweven, laag contrast)
+      const a = Math.atan2(q.x, q.z) * 0.16;
+      const u = a * 26;
+      const v = q.y * 26 + (Math.floor(u) % 2) * 0.5;
+      const fu = u - Math.floor(u) - 0.5;
+      const fv = v - Math.floor(v) - 0.5;
+      const motif = Math.max(0, 1 - Math.hypot(fu * 1.3, fv) * 2.6);
+      c = mixc(c, o.brocade, motif * 0.45);
+      if (motif > 0) return { c, m: motif * 0.35, h: 0.2 + motif * 0.6, t: o.t ?? 0.006 };
     }
     return { c, m, h, t: o.t ?? 0.006 };
   },
@@ -661,14 +668,17 @@ function paintSwatches(col, height, N) {
     const y0 = Math.floor(rect[1] * N);
     const x1 = Math.ceil(rect[2] * N);
     const y1 = Math.ceil(rect[3] * N);
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-      const u = (x - x0) / (x1 - x0);
-      const v = (y - y0) / (y1 - y0);
+    // met een rand van een paar texels (tegen doorlekken bij mipmaps)
+    const g = 1;
+    for (let y = Math.max(0, y0 - g); y < Math.min(N, y1 + g); y++) for (let x = Math.max(0, x0 - g); x < Math.min(N, x1 + g); x++) {
+      const u = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
+      const v = Math.min(1, Math.max(0, (y - y0) / (y1 - y0)));
       const [c, h] = fn(u, v);
       const k = y * N + x;
-      col[k * 4] = c * 255;
-      col[k * 4 + 1] = c * 255;
-      col[k * 4 + 2] = c * 255;
+      const cv = Math.max(0, Math.min(255, Math.round(c * 255))); // klemmen: Uint8 zou overlopen
+      col[k * 4] = cv;
+      col[k * 4 + 1] = cv;
+      col[k * 4 + 2] = cv;
       col[k * 4 + 3] = 0;
       height[k] = h;
     }
@@ -680,8 +690,8 @@ function paintSwatches(col, height, N) {
     return [0.86 + g * 0.14, g * 0.6];
   });
   fill(ATLAS.sw.leather, (u, v) => [0.88 + vnoise(u * 50, v * 50, 4) * 0.12, 0.4]);
-  fill(ATLAS.sw.fur, (u, v) => [0.78 + vnoise(u * 90, v * 12, 5) * 0.22, 0.8]);
-  fill(ATLAS.sw.dark, () => [0.6, 0.2]);
+  fill(ATLAS.sw.fur, (u, v) => [0.9 + vnoise(u * 90, v * 12, 5) * 0.1, 0.8]);
+  fill(ATLAS.sw.dark, () => [0.95, 0.2]);
 }
 
 // ---------------------------------------------------------------------------
