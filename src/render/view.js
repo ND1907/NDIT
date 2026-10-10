@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CrowdRenderer } from './crowd.js';
 import { HUMAN_NB, HORSE_NB, SIEGE_NB, makePose, poseHuman, poseHorse, poseSiege, setRoot, writeBones, HUMAN_SKEL, HORSE_SKEL, SIEGE_SKEL, HUMAN_BIND } from './rig.js';
-import { buildUnitModel, buildHorseModel, buildSiegeModel, buildBanner, unitTextures, neutralTextures } from './models.js';
+import { buildUnitModel, buildHorseModel, buildSiegeModel, buildBanner, unitTextures, neutralTextures, HORSE_BIND } from './models.js';
 import { WorldView } from './world.js';
 import { FxView } from './fx.js';
 import { UNITS, WEAPONS, FACTIONS } from '../sim/data.js';
@@ -103,7 +103,7 @@ export class GameView {
     this.fx.syncFog(this.scene.fog);
     const cap = Math.max(400, match.teams.reduce((a, t) => a + (t.cap || match.cap), 0) * 1.6 + 120);
     this.humans = new CrowdRenderer(this.scene, { nb: HUMAN_NB, capacity: Math.round(cap), quality: this.quality, name: 'mens', bind: HUMAN_BIND });
-    this.horses = new CrowdRenderer(this.scene, { nb: HORSE_NB, capacity: Math.round(cap * 0.5), quality: this.quality, name: 'paard' });
+    this.horses = new CrowdRenderer(this.scene, { nb: HORSE_NB, capacity: Math.round(cap * 0.5), quality: this.quality, name: 'paard', bind: HORSE_BIND });
     this.siege = new CrowdRenderer(this.scene, { nb: SIEGE_NB, capacity: 64, quality: this.quality, name: 'tuig' });
     this.hPose = makePose(HUMAN_SKEL);
     this.pPose = makePose(HORSE_SKEL);
@@ -151,8 +151,9 @@ export class GameView {
     const key = 'paard:' + faction;
     if (this.horses.types.has(key)) return;
     this.horses.addType(key, [
-      { geo: buildHorseModel(faction, 0), maxDist: this.quality === 'high' ? 70 : 40, shadow: true },
-      { geo: buildHorseModel(faction, 1), maxDist: Infinity, shadow: false },
+      { geo: buildHorseModel(faction, 0), maxDist: this.quality === 'low' ? 10 : 20, shadow: this.quality !== 'low' },
+      { geo: buildHorseModel(faction, 1), maxDist: 60, shadow: this.quality === 'high' },
+      { geo: buildHorseModel(faction, 2), maxDist: Infinity, shadow: false },
     ], neutralTextures());
   }
 

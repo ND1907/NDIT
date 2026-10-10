@@ -2,6 +2,74 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HB, PB, HUMAN_BIND } from './rig.js';
 import { HUMAN_JOINTS as J, compileOutfit, paintOutfit, bodyGeometry, ATLAS } from './human.js';
+import { unzlibSync } from 'three/examples/jsm/libs/fflate.module.js';
+import { HORSE_HEADER, HORSE_BIN } from './assets/horse-data.js';
+
+// rustposities van het paardenskelet (modelruimte)
+export const HORSE_BIND = new Float32Array(HORSE_HEADER.bind.flat());
+let HORSE_BASE = null;
+function horseBase() {
+  if (HORSE_BASE) return HORSE_BASE;
+  const s = atob(HORSE_BIN);
+  const u8 = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+  const raw = unzlibSync(u8);
+  const b = raw.buffer;
+  const o0 = raw.byteOffset;
+  HORSE_BASE = HORSE_HEADER.lods.map((L) => ({
+    n: L.count,
+    pos: new Float32Array(b, o0 + L.pos, L.count * 3),
+    nor: new Int8Array(b, o0 + L.nor, L.count * 4),
+    si: new Uint8Array(b, o0 + L.si, L.count * 4),
+    sw: new Uint8Array(b, o0 + L.sw, L.count * 4),
+    rg: new Uint8Array(b, o0 + L.rg, L.count * 4),
+    idx: new Uint16Array(b, o0 + L.idx, L.tris * 3),
+  }));
+  return HORSE_BASE;
+}
+// paardenlichaam: vacht (tint), manen/staart, hoeven, snuit
+function horseBodyGeo(lod, mane = '#1e1610') {
+  const H = horseBase()[Math.min(2, lod)];
+  const n = H.n;
+  const col = new Float32Array(n * 3);
+  const nor = new Float32Array(n * 3);
+  const skin = new Float32Array(n * 4);
+  const wts = new Float32Array(n * 4);
+  const uv = new Float32Array(n * 2);
+  const tint = new Float32Array(n);
+  const ao = new Float32Array(n);
+  const cm = new THREE.Color(mane);
+  const sw = ATLAS.sw.fur;
+  for (let i = 0; i < n; i++) {
+    const r = H.rg[i * 4];
+    const c = r === 0 ? [1, 1, 1] : r === 1 ? [cm.r, cm.g, cm.b] : r === 2 ? [0.06, 0.05, 0.045] : [0.25, 0.2, 0.18];
+    col.set(c, i * 3);
+    tint[i] = r === 0 ? 1 : r === 3 ? 0.6 : 0;
+    ao[i] = H.rg[i * 4 + 1] / 255;
+    for (let k = 0; k < 3; k++) nor[i * 3 + k] = H.nor[i * 4 + k] / 127;
+    for (let k = 0; k < 4; k++) {
+      skin[i * 4 + k] = H.si[i * 4 + k];
+      wts[i * 4 + k] = H.sw[i * 4 + k] / 255;
+    }
+    const x = H.pos[i * 3];
+    const y = H.pos[i * 3 + 1];
+    const z = H.pos[i * 3 + 2];
+    uv[i * 2] = sw[0] + 0.004 + (sw[2] - sw[0] - 0.008) * tri(z * 1.3 + x * 0.5);
+    uv[i * 2 + 1] = sw[1] + 0.004 + (sw[3] - sw[1] - 0.008) * tri(y * 1.7);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(H.pos), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aSkin', new THREE.BufferAttribute(skin, 4));
+  g.setAttribute('aWeight', new THREE.BufferAttribute(wts, 4));
+  g.setAttribute('aMetal', new THREE.BufferAttribute(new Float32Array(n), 1));
+  g.setAttribute('aTint', new THREE.BufferAttribute(tint, 1));
+  g.setAttribute('aAO', new THREE.BufferAttribute(ao, 1));
+  g.setIndex(new THREE.BufferAttribute(new Uint32Array(H.idx), 1));
+  return g;
+}
 
 // ---------------------------------------------------------------------------
 // Modelbouwer: voegt onderdelen samen tot één geometrie met per vertex kleur, skinning
@@ -25,9 +93,10 @@ const HEAD_XF = new THREE.Matrix4()
 const SPINE_XF = new THREE.Matrix4().makeTranslation(0, J.shoulderR[1] - J.spine[1] - 0.42, J.shoulderR[2] - J.spine[2]);
 
 class MB {
-  constructor(lod = 0, bind = null) {
+  constructor(lod = 0, bind = null, human = true) {
     this.lod = lod;
     this.bind = bind;
+    this.human = human;
     this.geos = [];
   }
 
@@ -48,8 +117,8 @@ class MB {
     _m.compose(new THREE.Vector3(p[0], p[1], p[2]), _q, new THREE.Vector3(s[0], s[1], s[2]));
     geo.applyMatrix4(_m);
     if (this.bind) {
-      if (bone === HB.HEAD && !o.raw) geo.applyMatrix4(HEAD_XF);
-      else if (bone === HB.SPINE && !o.raw) geo.applyMatrix4(SPINE_XF);
+      if (this.human && bone === HB.HEAD && !o.raw) geo.applyMatrix4(HEAD_XF);
+      else if (this.human && bone === HB.SPINE && !o.raw) geo.applyMatrix4(SPINE_XF);
       const bx = this.bind[bone * 3];
       const by = this.bind[bone * 3 + 1];
       const bz = this.bind[bone * 3 + 2];
@@ -128,7 +197,11 @@ class MB {
   // omwentelingslichaam uit [radius, y]-punten
   lathe(bone, pts, color, o = {}) {
     const v = pts.map(([r, y]) => new THREE.Vector2(r, y));
-    return this.add(new THREE.LatheGeometry(v, this.seg(o.seg || 12)), bone, color, o);
+    this.add(new THREE.LatheGeometry(v, this.seg(o.seg || 12)), bone, color, o);
+    // dubbelzijdig: tweede schaal met omgekeerde winding (binnenkant van helmen, kleden…)
+    const g = new THREE.LatheGeometry(v, this.seg(o.seg || 12));
+    g.scale(-1, 1, 1);
+    return this.add(g, bone, color, { ...o, shade: (o.shade ?? 1) * 0.7 });
   }
 
   build() {
@@ -1093,41 +1166,24 @@ const HORSE_DRESS = {
 
 export function buildHorseModel(faction, lod) {
   const D = HORSE_DRESS[faction] || HORSE_DRESS.ottoman;
-  const b = new MB(lod);
-  const coat = '#ffffff';
-  const T = { tint: 1, mat: 'fur' };
+  const b = new MB(Math.min(1, lod), HORSE_BIND, false);
+  b.addRaw(horseBodyGeo(lod));
   const B = PB.BODY;
-  // romp (ovaal), borst en achterhand
-  b.sph(B, 0.42, coat, { ...T, s: [0.78, 0.85, 1.75], ws: 16, hs: 12 });
-  b.sph(B, 0.36, coat, { ...T, p: [0, 0.02, 0.55], s: [0.85, 0.95, 0.9] });
-  b.sph(B, 0.38, coat, { ...T, p: [0, 0.05, -0.55], s: [0.88, 0.95, 0.9] });
-  // hals en hoofd
-  b.cyl(PB.NECK, 0.15, 0.24, 0.75, coat, { ...T, p: [0, 0.3, 0.12], r: [0.55, 0, 0], s: [0.85, 1, 1] });
-  b.box(PB.NECK, 0.06, 0.65, 0.12, '#1e1610', { p: [0, 0.35, 0.0], r: [0.55, 0, 0], mat: 'fur' });
-  b.sph(PB.HEAD, 0.14, coat, { ...T, p: [0, 0.02, 0.05], s: [0.85, 1, 1.1] });
-  b.cyl(PB.HEAD, 0.075, 0.11, 0.45, coat, { ...T, p: [0, -0.12, 0.28], r: [-1.05, 0, 0], s: [0.85, 1, 1] });
-  b.cone(PB.HEAD, 0.045, 0.14, coat, { ...T, p: [-0.07, 0.17, 0.0], seg: 5 });
-  b.cone(PB.HEAD, 0.045, 0.14, coat, { ...T, p: [0.07, 0.17, 0.0], seg: 5 });
-  b.box(PB.HEAD, 0.18, 0.03, 0.03, '#2a1a10', { p: [0, -0.05, 0.2], r: [-1.05, 0, 0], mat: 'leather' });
-  b.sph(PB.HEAD, 0.02, '#111', { p: [-0.1, 0.02, 0.12], detail: true });
-  b.sph(PB.HEAD, 0.02, '#111', { p: [0.1, 0.02, 0.12], detail: true });
-  // benen
-  for (const [u1, l1] of [[PB.FL_U, PB.FL_L], [PB.FR_U, PB.FR_L], [PB.HL_U, PB.HL_L], [PB.HR_U, PB.HR_L]]) {
-    b.cyl(u1, 0.085, 0.065, 0.52, coat, { ...T, p: [0, -0.24, 0] });
-    b.cyl(l1, 0.045, 0.04, 0.48, coat, { ...T, p: [0, -0.24, 0] });
-    b.cyl(l1, 0.055, 0.065, 0.1, '#1e1610', { p: [0, -0.52, 0.01] });
-  }
-  b.cone(PB.TAIL, 0.09, 0.7, '#1e1610', { p: [0, -0.35, 0], r: [Math.PI, 0, 0], seg: 6, mat: 'fur' });
-  // schabrak, zadel en tuig
-  b.lathe(B, [[0.0, 0.42], [0.37, 0.33], [0.44, 0.0], [0.45, -0.3]], D.cloth, { s: [1, 1, 2.2], p: [0, 0, -0.05], open: true, seg: 14 });
-  b.cyl(B, 0.452, 0.452, 0.05, D.trim, { p: [0, -0.3, -0.05], s: [1, 1, 2.2], open: true, detail: true });
-  if (D.stripes && !lod) for (let i = 0; i < 4; i++) b.cyl(B, 0.448, 0.448, 0.05, '#f2f0ea', { p: [0, -0.2 + i * 0.12, -0.05], s: [1, 1, 2.21], open: true });
-  b.box(B, 0.36, 0.1, 0.55, D.saddle, { p: [0, 0.42, -0.02], mat: 'leather' });
-  b.box(B, 0.3, 0.14, 0.06, D.saddle, { p: [0, 0.5, 0.25], mat: 'leather' });
-  b.box(B, 0.3, 0.12, 0.06, D.saddle, { p: [0, 0.49, -0.3], mat: 'leather' });
-  if (D.mail) b.cyl(PB.NECK, 0.2, 0.27, 0.7, '#7d838c', { p: [0, 0.3, 0.1], r: [0.55, 0, 0], metal: 0.7, s: [0.9, 1, 1], open: true });
-  if (D.plate) b.box(PB.HEAD, 0.16, 0.06, 0.45, '#b5bcc6', { p: [0, 0.03, 0.28], r: [-1.05, 0, 0], metal: 1 });
-  if (D.plume) b.cone(PB.HEAD, 0.04, 0.22, D.plume, { p: [0, 0.25, 0.0], seg: 5 });
+  // hoofdstel en teugels
+  b.box(PB.HEAD, 0.2, 0.025, 0.025, '#2a1a10', { p: [0, -0.07, 0.2], r: [-0.8, 0, 0], mat: 'leather' });
+  b.box(PB.HEAD, 0.19, 0.025, 0.025, '#2a1a10', { p: [0, -0.24, 0.38], r: [-0.8, 0, 0], mat: 'leather' });
+  b.box(PB.HEAD, 0.21, 0.025, 0.025, '#2a1a10', { p: [0, 0.04, 0.02], r: [0.2, 0, 0], mat: 'leather', detail: true });
+  // schabrak (kleed) en zadel met hoge boom
+  b.lathe(B, [[0.0, 0.47], [0.34, 0.4], [0.42, 0.1], [0.43, -0.2]], D.cloth, { s: [1, 1, 1.45], p: [0, 0, -0.02], open: true, seg: 16 });
+  b.lathe(B, [[0.432, -0.2], [0.436, -0.26]], D.trim, { s: [1, 1, 1.45], p: [0, 0, -0.02], open: true, seg: 16, detail: true });
+  if (D.stripes && !lod) for (let i = 0; i < 4; i++) b.lathe(B, [[0.428 - i * 0.002, 0.1 - i * 0.07], [0.43 - i * 0.002, 0.07 - i * 0.07]], '#f2f0ea', { s: [1, 1, 1.46], p: [0, 0, -0.02], open: true, seg: 16 });
+  b.box(B, 0.34, 0.08, 0.5, D.saddle, { p: [0, 0.48, 0.0], mat: 'leather' });
+  b.box(B, 0.3, 0.16, 0.06, D.saddle, { p: [0, 0.56, 0.24], mat: 'leather' });
+  b.box(B, 0.3, 0.13, 0.06, D.saddle, { p: [0, 0.55, -0.26], mat: 'leather' });
+  for (const s2 of [-1, 1]) b.box(B, 0.02, 0.4, 0.03, '#2a1a10', { p: [s2 * 0.2, 0.25, 0.05], mat: 'leather', detail: true });
+  if (D.mail) b.cyl(PB.NECK, 0.22, 0.29, 0.7, '#7d838c', { p: [0, 0.3, 0.06], r: [0.55, 0, 0], metal: 0.7, s: [0.85, 1, 1], open: true });
+  if (D.plate) b.box(PB.HEAD, 0.17, 0.05, 0.42, '#b5bcc6', { p: [0, 0.06, 0.18], r: [-0.85, 0, 0], metal: 1 });
+  if (D.plume) b.cone(PB.HEAD, 0.04, 0.22, D.plume, { p: [0, 0.3, -0.02], seg: 5 });
   return b.build();
 }
 
