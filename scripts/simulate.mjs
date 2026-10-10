@@ -24,6 +24,10 @@ export function runMatch(opts) {
   let ticks = 0;
   const stuck = new Map();
   let maxStuck = 0;
+  const idle = new Map();
+  const idleWhy = {};
+  let maxIdle = 0;
+  let idleNowMax = 0;
   let worstStuck = '';
   const t0 = Date.now();
   while (!m.over && m.time < maxT) {
@@ -41,6 +45,30 @@ export function runMatch(opts) {
       }
     }
     m.events.length = 0;
+    // doelloze eenheden: geen voortgang, geen doelwit, geen geldige reden om stil te staan
+    if (ticks % 30 === 0) {
+      for (const u of m.units) {
+        if (!u.alive || u.siege || u.isPlayer) continue;
+        const a = (idle.get(u) || { x: u.x, z: u.z, t: m.time, why: '' });
+        const o = u.squad?.order;
+        const moved = Math.hypot(u.x - a.x, u.z - a.z) > 2.5;
+        const busy = u.ai.target || u.ai.struct || u.ai.dockSt || u.attackT < 2 || u.post || u.climb || u.wall || moved;
+        const holdOk = !o || ['defend', 'posts', 'keep', 'guard'].includes(o.kind) || (o.kind === 'rally' && !u.ai.wantMove) || (o.kind === 'attack' && !u.ai.wantMove && ['archer', 'crossbow', 'gunner', 'fire'].includes(u.role));
+        if (busy || (holdOk && !u.ai.wantMove)) idle.set(u, { x: u.x, z: u.z, t: m.time });
+        else {
+          if (!idle.has(u)) idle.set(u, a);
+          const dur = m.time - idle.get(u).t;
+          if (dur > 15) {
+            const key = `${o?.kind || '-'}${u.ai.wantMove ? '/wil' : '/staat'}${u.blockedBy ? '/blok' : ''}`;
+            idleWhy[key] = Math.max(idleWhy[key] || 0, Math.round(dur));
+            maxIdle = Math.max(maxIdle, dur);
+          }
+        }
+      }
+      let n = 0;
+      for (const [u, a] of idle) if (u.alive && m.time - a.t > 15) n++;
+      idleNowMax = Math.max(idleNowMax, n);
+    }
     // vastgelopen eenheden: willen bewegen maar komen 20 s niet vooruit
     if (ticks % 30 === 0) {
       for (const u of m.units) {
@@ -73,7 +101,7 @@ export function runMatch(opts) {
   return {
     teams: opts.teams.join('+'), seed: opts.seed, minutes: +(m.time / 60).toFixed(1), winner: m.winner, reason: m.winReason,
     avgTickMs: +(tickMs / ticks).toFixed(2), worstTickMs: +worst.toFixed(1), units: m.units.filter((u) => u.alive).length,
-    stuckNow, maxStuckS: Math.round(maxStuck), worstStuck, wall: ((Date.now() - t0) / 1000).toFixed(0) + 's', log, counts, summary: m.summary(),
+    stuckNow, maxStuckS: Math.round(maxStuck), worstStuck, maxIdleS: Math.round(maxIdle), idleNowMax, idleWhy, wall: ((Date.now() - t0) / 1000).toFixed(0) + 's', log, counts, summary: m.summary(),
   };
 }
 

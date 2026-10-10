@@ -66,6 +66,7 @@ export class Match {
 
     this.units = [];
     this.freeHorses = [];
+    this.stats = {};
     this.projectiles = [];
     this.fires = [];
     this.events = [];
@@ -240,6 +241,43 @@ export class Match {
       this.makeSquad(t, members, { kind: 'rally' });
     }
     return spawned;
+  }
+
+  // Vangnet: een bot zonder nuttige bezigheid krijgt een nieuwe taak (bij een actieve groep in de
+  // buurt aansluiten, of terug naar de donjon van het eigen fort — die is altijd bereikbaar).
+  reassign(u) {
+    if (u.isPlayer || u.siege || !u.alive) return;
+    const t = this.teamById[u.team];
+    u.ai.reassigns = (u.ai.reassigns || 0) + 1;
+    this.stats.reassigns = (this.stats.reassigns || 0) + 1;
+    if (u.squad) {
+      const m = u.squad.members;
+      const k = m.indexOf(u);
+      if (k >= 0) m.splice(k, 1);
+      u.squad = null;
+    }
+    u.ai.soloT = this.time + 15;
+    u.ai.target = null;
+    let best = null;
+    let bd = 70;
+    if (u.ai.reassigns < 3) {
+      for (const sq of this.squads) {
+        if (sq.team !== u.team || sq.members.length < 2 || !['attack', 'defend', 'rally'].includes(sq.order.kind)) continue;
+        const a = sq.members[0];
+        const d = Math.hypot(a.x - u.x, a.z - u.z);
+        if (d < bd && d > 4) {
+          bd = d;
+          best = sq;
+        }
+      }
+    }
+    if (best) {
+      best.members.push(u);
+      u.squad = best;
+    } else {
+      this.makeSquad(t, [u], { kind: 'keep', since: this.time });
+      u.ai.reassigns = 0;
+    }
   }
 
   makeSquad(t, members, order) {

@@ -294,6 +294,21 @@ export function unitThink(m, u) {
 
   const w0 = u.weapons[0];
   const ranged = RANGED_ROLES.has(u.role) || (u.role === 'guard' && w0.kind === 'ranged');
+
+  // vangnet: wie te lang niets nuttigs doet (niet vechten, niet vooruitkomen, geen geldige wachtpositie)
+  // krijgt een nieuwe taak van de commandant
+  const holding = !ai.wantMove && (['defend', 'posts', 'keep', 'guard', 'rally'].includes(order.kind) || (order.kind === 'attack' && ranged));
+  const useful = ai.target || ai.struct || ai.dockSt || u.attackT < 2 || u.post || u.wall || u.climb || holding || Math.hypot(u.x - (ai.ux ?? u.x), u.z - (ai.uz ?? u.z)) > 3;
+  if (useful || ai.ut == null) {
+    ai.ux = u.x;
+    ai.uz = u.z;
+    ai.ut = m.time;
+  } else if (m.time - ai.ut > 20) {
+    m.reassign(u);
+    ai.ux = u.x;
+    ai.uz = u.z;
+    ai.ut = m.time;
+  }
   const rangeW = ranged ? u.weapons[weaponIndex(u, 'ranged')] : null;
   let senseR;
   if (u.post) senseR = rangeW ? rangeW.range * 1.1 : 30;
@@ -701,6 +716,15 @@ function slotOffset(u, k) {
 function orderMove(m, u, dt, sp, order) {
   const sq = u.squad;
   const ai = u.ai;
+  // wachtorders: dicht bij het doel maar door gedrang geen plek → gewoon blijven staan (niet eindeloos duwen)
+  if ((order.kind === 'rally' || order.kind === 'keep' || order.kind === 'defend' || order.kind === 'guard') && (ai.stuckT > 1 || ai.crowdHold > m.time)) {
+    const g = goalOf(m, u, order);
+    if (Math.hypot(g[0] - u.x, g[1] - u.z) < 16) {
+      if (ai.stuckT > 1) ai.crowdHold = m.time + 6;
+      move(u, 0, 0, 0);
+      return;
+    }
+  }
   // schutters voor een gesloten vijandelijk fort: schietpositie innemen in plaats van tegen de muur te duwen
   if ((order.kind === 'attack' || order.kind === 'raid') && (RANGED_ROLES.has(u.role) || u.role === 'fire')) {
     const tf = m.teamById[order.team]?.fort;
@@ -764,11 +788,28 @@ function orderMove(m, u, dt, sp, order) {
       return;
     }
     const d = m.nav.distAt(field, u.x, u.z);
-    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'capture' || order.kind === 'keep' || order.kind === 'guard';
+    // veroveren: pas aangekomen als je echt in de cirkel staat
+    if (order.kind === 'capture') {
+      const cp = m.map.capturePoints[order.cp];
+      const cd = Math.hypot(cp.x - u.x, cp.z - u.z);
+      if (cd < cp.r * 0.55) return;
+      if (cd < 16) {
+        move(u, (cp.x - u.x) / cd, (cp.z - u.z) / cd, speed);
+        faceMove(u, dt);
+        return;
+      }
+    }
+    const hold = order.kind === 'defend' || order.kind === 'rally' || order.kind === 'posts' || order.kind === 'keep' || order.kind === 'guard';
     if (hold && d < (order.kind === 'guard' || order.kind === 'keep' ? 9 : 6)) return; // aangekomen
-    if (d >= NAV_INF) return;
     if (m.nav.dirAt(field, u.x, u.z, tmpDir) && (tmpDir.x || tmpDir.z)) {
+      // ook vanuit een onbegaanbare cel (tegen een muur gedrukt) naar de beste buurcel
       move(u, tmpDir.x, tmpDir.z, speed);
+      faceMove(u, dt);
+    } else if (d >= NAV_INF) {
+      // geen pad bekend: rechtstreeks richting doel (het veld wordt intussen bijgewerkt)
+      const g = goalOf(m, u, order);
+      const gd = Math.hypot(g[0] - u.x, g[1] - u.z) || 1;
+      move(u, (g[0] - u.x) / gd, (g[1] - u.z) / gd, speed);
       faceMove(u, dt);
     }
     return;
