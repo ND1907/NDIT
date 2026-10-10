@@ -229,7 +229,7 @@ function findTarget(m, u, radius, needLos, prefer) {
   const melee = !needLos;
   m.unitGrid.query(u.x, u.z, radius, (e) => {
     if (e.alliance === u.alliance || !e.alive) return false;
-    if (melee && e.y > 1 && !e.climb) return false; // op de muur: onbereikbaar voor voetvolk
+    if (melee && Math.abs(e.y - u.y) > 1.5 && !e.climb) return false; // ander niveau (muur ↔ grond): onbereikbaar voor voetvolk
     let d = Math.hypot(e.x - u.x, e.z - u.z);
     if (e === cur) d -= 6;
     if (prefer) d *= prefer(e);
@@ -432,6 +432,34 @@ export function unitSteer(m, u, dt) {
       faceMove(u, dt);
       return;
     }
+  }
+
+  // op de weergang (niet op een post): vijanden op dezelfde weergang bevechten, anders via een ladder naar beneden
+  if (u.wall && !u.post) {
+    const W = u.wall;
+    if (t && t.wall && t.wall.walk === W.walk) {
+      const d = Math.hypot(t.x - u.x, t.z - u.z);
+      const reach = u.weapons[u.wi].kind === 'melee' ? (u.weapons[u.wi].reach || 2) * 0.8 : 0;
+      if (d > reach && reach > 0) move(u, (t.x - u.x) / d, (t.z - u.z) / d, sp);
+      else move(u, 0, 0, 0);
+      faceTo(u, t.x, t.z, dt, 6);
+      if (reach === 0) tryShoot(m, u, t);
+      return;
+    }
+    const l = m.nearestLadder(u, 999);
+    if (l) {
+      if (Math.abs(l.along - W.a) < 1.0) m.climbDown(u, l);
+      else {
+        const [lx, lz] = m.wallPoint(W.walk, l.along, 0);
+        const d = Math.hypot(lx - u.x, lz - u.z) || 1;
+        move(u, (lx - u.x) / d, (lz - u.z) / d, sp);
+      }
+    } else move(u, 0, 0, 0);
+    if (t) {
+      faceTo(u, t.x, t.z, dt, 5);
+      if (u.weapons[u.wi].kind === 'ranged') tryShoot(m, u, t);
+    }
+    return;
   }
 
   // op de muur: alleen draaien en schieten

@@ -352,3 +352,57 @@ describe('allianties', () => {
     expect(new Set(m.teams.map((t) => t.cap)).size).toBe(1);
   });
 });
+
+describe('weergang', () => {
+  it('na de ladder kun je over de muur lopen zonder eraf te vallen; E bij een ladder = afdalen', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine'], mode: 'ffa', troops: 'small', length: 'short', seed: 2, withPlayer: true, playerTeam: 'ottoman', playerUnit: 'ott_janissary' });
+    const p = m.player;
+    const f = m.teamById.ottoman.fort;
+    const post = f.posts.find((q) => q.walk);
+    p.x = post.footX;
+    p.z = post.footZ;
+    p.spawnT = -100;
+    const step = (inp, n) => {
+      for (let i = 0; i < n; i++) {
+        m.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, ...inp };
+        m.update(1 / 30);
+        m.events.length = 0;
+      }
+    };
+    step({ climb: true }, 1);
+    step({}, 60);
+    expect(p.wall).toBeTruthy();
+    expect(p.y).toBeGreaterThan(5);
+    const wk = p.wall.walk;
+    // in alle richtingen lopen: blijft op de muur, binnen de weergang
+    for (const [mx, mz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7]]) {
+      step({ mx, mz }, 90);
+      expect(p.wall).toBeTruthy();
+      expect(p.y).toBeCloseTo(wk.h, 3);
+      expect(p.wall.a).toBeGreaterThanOrEqual(wk.from);
+      expect(p.wall.a).toBeLessThanOrEqual(wk.to);
+      expect(Math.abs(p.wall.o)).toBeLessThan(wk.t / 2);
+    }
+    // terug naar een ladder en afdalen
+    const l = f.posts.find((q) => q.walk === wk);
+    p.wall.a = l.along;
+    step({ climb: true }, 1);
+    step({}, 50);
+    expect(p.wall).toBeFalsy();
+    expect(p.y).toBeCloseTo(0, 3);
+  });
+  it('een vernield muurstuk onder je voeten: je valt naar beneden', () => {
+    const m = new Match({ teams: ['ottoman', 'byzantine'], mode: 'ffa', troops: 'small', length: 'short', seed: 2, withPlayer: true, playerTeam: 'ottoman', playerUnit: 'ott_janissary' });
+    const p = m.player;
+    const post = m.teamById.ottoman.fort.posts.find((q) => q.walk);
+    p.post = null;
+    p.wall = { walk: post.walk, a: post.along, o: 0 };
+    p.y = post.walk.h;
+    const piece = post.walk.pieces.find((q) => post.along >= q.a && post.along <= q.b);
+    m.destroyStruct(piece.st, null);
+    m.input = { mx: 0, mz: 0, yaw: 0, pitch: 0 };
+    m.update(1 / 30);
+    expect(p.wall).toBeFalsy();
+    expect(p.y).toBe(0);
+  });
+});

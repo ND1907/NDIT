@@ -99,7 +99,7 @@ export class Match {
       cd: this.rng() * 0.5, windup: 0, pending: null, sprayT: 0,
       anim: 'idle', animT: this.rng() * 10, attackT: 9, hitT: 9, gait: 0,
       squad: null, ai: { thinkT: this.rng() * 0.5, target: null, struct: null, mode: 'order', passT: 0, stuckT: 0, lx: x, lz: z, reactT: 0 },
-      post: null, climb: null, blockedBy: null,
+      post: null, climb: null, wall: null, blockedBy: null,
       buff: { dmg: 0, def: 0, speed: 0, until: 0 }, aura: null, burnT: 0, burnBy: null,
       kills: 0, dmgDealt: 0, lastAttackT: -99, lastHurtT: -99, spawnT: this.time,
       variant: Math.floor(this.rng() * 1000),
@@ -350,13 +350,32 @@ export class Match {
   _playerControl(u, dt) {
     const inp = this.input;
     if (!inp) return;
-    if (u.post) {
-      // op de muur: draaien en schieten; bewegen = afdalen
-      if (Math.hypot(inp.mx, inp.mz) > 0.5 || inp.climb) this.leavePost(u);
+    if (u.post && !u.post.walk) {
+      // op een toren/poortpost: draaien en schieten; bewegen of E = afdalen
+      if (Math.hypot(inp.mx, inp.mz) > 0.5 || inp.climb) {
+        inp.climb = false;
+        this.leavePost(u);
+      }
       u.yaw = inp.yaw;
       u.pitch = inp.pitch;
       u.dvx = 0;
       u.dvz = 0;
+    } else if (u.wall) {
+      // op de weergang: vrij lopen langs de muur
+      if (u.post && Math.hypot(inp.mx, inp.mz) > 0.3) {
+        u.post.occupant = null;
+        u.post = null;
+      }
+      const sp = this.speedOf(u) * (inp.sprint ? 1.1 : 0.75);
+      u.dvx = inp.mx * sp;
+      u.dvz = inp.mz * sp;
+      u.yaw = inp.yaw;
+      u.pitch = inp.pitch;
+      if (inp.climb) {
+        inp.climb = false;
+        const l = this.nearestLadder(u);
+        if (l) this.climbDown(u, l);
+      }
     } else if (u.mounted) {
       const mag = Math.min(1, Math.hypot(inp.mx, inp.mz));
       u.dvx = inp.mx;
@@ -386,7 +405,7 @@ export class Match {
     }
     if (inp.climb) {
       inp.climb = false;
-      if (!u.post && !u.mounted && !u.siege) {
+      if (!u.post && !u.wall && !u.mounted && !u.siege) {
         const p = this.nearestFreePost(u, 3.5);
         if (p) this.takePost(u, p);
       }
@@ -424,6 +443,7 @@ export class Match {
         if (c.toPost) {
           u.post = c.toPost;
           u.yaw = c.toPost.faceYaw;
+          if (c.toPost.walk) u.wall = { walk: c.toPost.walk, a: c.toPost.along, o: -c.toPost.walk.out * 0.1 };
         }
       }
       return;
@@ -434,6 +454,10 @@ export class Match {
       u.y = u.post.y;
       u.vx = u.vz = 0;
       u.speed = 0;
+      return;
+    }
+    if (u.wall) {
+      this._moveOnWall(u, dt);
       return;
     }
 
@@ -477,7 +501,7 @@ export class Match {
     const r = u.radius;
     const self = u;
     this.unitGrid.query(u.x, u.z, r + 3.1, (o) => {
-      if (o === self || o.post || o.climb) return false;
+      if (o === self || o.post || o.climb || Math.abs(o.y - self.y) > 1.5) return false;
       if (o.docked && o.alliance === self.alliance) return false;
       const dx = self.x - o.x;
       const dz = self.z - o.z;
@@ -524,6 +548,21 @@ export class Match {
         const [, lz] = toLocal(st.ob, u.x, u.z);
         const k = clamp(1 - (Math.abs(lz) - st.ob.hz) / 3, 0, 1);
         u.y = st.h * k;
+        // bovenop de muur: de helft blijft op de weergang om de verdedigers daar te bevechten
+        if (k > 0.98 && u.id % 2 === 0) {
+          const walk = st.fort.walks.find((w) => w.pieces.some((q) => q.st === st));
+          if (walk) {
+            const c = Math.cos(walk.fort.rot);
+            const sn = Math.sin(walk.fort.rot);
+            const dx = u.x - walk.fort.cx;
+            const dz = u.z - walk.fort.cz;
+            const lu = c * dx - sn * dz;
+            const lv = sn * dx + c * dz;
+            u.wall = { walk, a: walk.axis === 'u' ? lu : lv, o: 0 };
+            u.y = walk.h;
+            u.ai.dockSt = null;
+          }
+        }
       }
     }
     // binnen de kaart blijven
@@ -837,7 +876,7 @@ export class Match {
     }
     mult *= 1 - Math.min(0.6, (e.aura?.def || 0) + (e.buff.until > this.time ? e.buff.def : 0));
     // verschanst: verdedigers in hun eigen fort of op de muur zijn beter beschermd
-    if (!e.siege && (e.post || regionOf(this.map, e.x, e.z) === e.team)) mult *= 0.78;
+    if (!e.siege && (e.post || e.wall || regionOf(this.map, e.x, e.z) === e.team)) mult *= 0.78;
     // schild vangt aanvallen van voren op
     if (e.def.shield && attacker && !opts.dot && !opts.splash) {
       const facing = this._facing(e, attacker);
@@ -878,6 +917,7 @@ export class Match {
       u.post = null;
     }
     u.climb = null;
+    u.wall = null;
     const t = this.teamById[u.team];
     t.units--;
     if (!u.siege) t.soldiers--;
@@ -981,7 +1021,87 @@ export class Match {
     if (!p) return;
     p.occupant = null;
     u.post = null;
+    u.wall = null;
     u.climb = { x0: p.x, z0: p.z, y0: p.y, x1: p.footX, z1: p.footZ, y1: 0, t: 0, dur: 1.2, toPost: null };
+  }
+
+  // ------------------------------------------------------------------ weergang
+  // Positie op de weergang (along = langs de muur, off = dwars, positief = naar buiten)
+  wallPoint(walk, along, off) {
+    return walk.axis === 'u' ? walk.fort.toWorld(along, walk.fixed + off) : walk.fort.toWorld(walk.fixed + off, along);
+  }
+
+  // Ladder (post met voet) op dezelfde weergang binnen bereik
+  nearestLadder(u, range = 2.6) {
+    if (!u.wall) return null;
+    let best = null;
+    let bd = range;
+    for (const p of u.wall.walk.fort.posts) {
+      if (p.walk !== u.wall.walk || p.struct.destroyed) continue;
+      const d = Math.abs(p.along - u.wall.a);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  // Van de weergang via een ladder naar beneden
+  climbDown(u, ladder) {
+    const [x, z] = [u.x, u.z];
+    u.wall = null;
+    if (u.post) {
+      u.post.occupant = null;
+      u.post = null;
+    }
+    u.climb = { x0: x, z0: z, y0: u.y, x1: ladder.footX, z1: ladder.footZ, y1: 0, t: 0, dur: 1.2, toPost: null };
+    this.events.push({ t: 'climb', u });
+  }
+
+  _moveOnWall(u, dt) {
+    const W = u.wall;
+    const wk = W.walk;
+    const f = wk.fort;
+    // staat de eenheid op een vernield stuk muur? → valt naar beneden
+    const under = wk.pieces.find((p) => W.a >= p.a - 0.01 && W.a <= p.b + 0.01);
+    if (!under || under.st.destroyed) {
+      u.wall = null;
+      u.y = 0;
+      const [x, z] = this.wallPoint(wk, W.a, -wk.out * (wk.t / 2 + 1.2));
+      u.x = x;
+      u.z = z;
+      this.damageUnit(u, 30, 'blunt', null, { dot: true });
+      return;
+    }
+    const c = Math.cos(f.rot);
+    const sn = Math.sin(f.rot);
+    const vx = u.dvx || 0;
+    const vz = u.dvz || 0;
+    const lu = c * vx - sn * vz;
+    const lv = sn * vx + c * vz;
+    const along = wk.axis === 'u' ? lu : lv;
+    const across = wk.axis === 'u' ? lv : lu;
+    // aaneengesloten intact stuk rond de eenheid (torens en bressen houden je tegen)
+    let lo = wk.from + 0.45;
+    let hi = wk.to - 0.45;
+    for (const p of wk.pieces) if (p.st.destroyed) {
+      if (p.b <= W.a) lo = Math.max(lo, p.b + 0.45);
+      else if (p.a >= W.a) hi = Math.min(hi, p.a - 0.45);
+    }
+    const na = clamp(W.a + along * dt, lo, hi);
+    // binnenkant open, buitenkant kantelen: niet van de muur kunnen lopen of glijden
+    const no = clamp((W.o + across * dt) * wk.out, -(wk.t / 2 - 0.3), wk.t / 2 - 0.85) * wk.out;
+    W.a = na;
+    W.o = no;
+    const [x, z] = this.wallPoint(wk, na, no);
+    u.vx = (x - u.x) / Math.max(1e-4, dt);
+    u.vz = (z - u.z) / Math.max(1e-4, dt);
+    u.speed = Math.hypot(u.vx, u.vz);
+    u.x = x;
+    u.z = z;
+    u.y = wk.h;
+    if (u.speed > 0.2 && !u.isPlayer) u.yaw = Math.atan2(u.vx, u.vz);
   }
 
   // ------------------------------------------------------------------ belegeringstoren

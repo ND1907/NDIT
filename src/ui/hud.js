@@ -123,12 +123,13 @@ export class Hud {
     }
     // ladder
     let prompt = '';
-    const nearPost = !p.post && !p.mounted && !p.siege && p.alive && match.nearestFreePost(p, 3.5);
-    if (p.post) prompt = match.controlsTouch ? '⇅ = muur af' : 'E = muur af';
+    const nearPost = !p.post && !p.wall && !p.mounted && !p.siege && p.alive && match.nearestFreePost(p, 3.5);
+    if (p.wall) prompt = match.nearestLadder(p) ? (match.controlsTouch ? '⇅ = ladder af' : 'E = ladder af') : 'Op de weergang · loop naar een ladder om af te dalen';
+    else if (p.post) prompt = match.controlsTouch ? '⇅ = muur af' : 'E = muur af';
     else if (nearPost) prompt = match.controlsTouch ? '⇅ = ladder op' : 'E = de muur op';
     this.set('prompt', prompt, (v) => {
       this.el.prompt.textContent = v;
-      this.el['btn-climb'].classList.toggle('hidden', !v);
+      this.el['btn-climb'].classList.toggle('hidden', !v || v.startsWith('Op de weergang'));
     });
     // schade-indicatie
     this.hurtT = Math.max(0, this.hurtT - dt);

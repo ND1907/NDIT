@@ -57,7 +57,7 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
 
     const fort = {
       team, style, cx, cz, rot, W: F.W, H, byz,
-      structures: [], posts: [], spawn: [], buildings: [],
+      structures: [], posts: [], spawn: [], buildings: [], walks: [],
       fallen: false, capture: 0, captureBy: null, breached: false,
     };
     fort.toWorld = W;
@@ -92,6 +92,9 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
         for (const [a, b] of pieces) {
           const len = b - a;
           const n = Math.max(1, Math.round(len / 11));
+          // weergang bovenop dit muurstuk (tussen twee torens)
+          const walk = { fort, axis: s.axis, fixed: s.fixed, from: a, to: b, h, t, out: Math.sign(s.fixed), pieces: [], id: fort.walks.length };
+          fort.walks.push(walk);
           for (let k = 0; k < n; k++) {
             const pa = a + (len * k) / n;
             const pb = a + (len * (k + 1)) / n;
@@ -101,6 +104,7 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
               ? mkStruct(tag, mid, s.fixed, hl, t / 2, h, wallHp, 'stone', { side: s.front ? 'front' : s.fixed > 0 ? 'front' : 'back', normalU: 0, normalV: Math.sign(s.fixed) })
               : mkStruct(tag, s.fixed, mid, t / 2, hl, h, wallHp, 'stone', { side: 'side', normalU: Math.sign(s.fixed), normalV: 0 });
             segs.push(st);
+            walk.pieces.push({ st, a: pa, b: pb });
             // posten bovenop de muur (verdedigers)
             const wantPosts = s.front || (postsOnSides && (s.axis === 'v'));
             if (wantPosts) {
@@ -114,7 +118,7 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
                 const [px, pz] = W(pu + inU * 0.1, pv + inV * 0.1);
                 const [fx, fz] = W(pu + inU * (t / 2 + 1.8), pv + inV * (t / 2 + 1.8));
                 const [ox, oz] = W(pu - inU * 6, pv - inV * 6);
-                fort.posts.push({ x: px, z: pz, y: h, footX: fx, footZ: fz, faceYaw: Math.atan2(ox - px, oz - pz), struct: st, occupant: null, front: !!s.front });
+                fort.posts.push({ x: px, z: pz, y: h, footX: fx, footZ: fz, faceYaw: Math.atan2(ox - px, oz - pz), struct: st, occupant: null, front: !!s.front, walk, along });
               }
             }
           }
