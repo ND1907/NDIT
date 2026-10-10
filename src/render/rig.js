@@ -1,4 +1,5 @@
 // Skeletten en procedurele animaties voor mensen, paarden en belegeringstuig.
+import { HUMAN_JOINTS } from './assets/human-rig.js';
 // Per bot wordt een 3x4-matrix (12 floats) berekend; de crowd-renderer stuurt die
 // naar de GPU, waar elk model per bot wordt vervormd.
 
@@ -80,34 +81,60 @@ export function resetPose(pose, skel) {
 }
 
 // ---------------------------------------------------------------------------
-// Menselijk skelet (model kijkt naar +Z, rechts = −X)
-// [ouder, offsetX, offsetY, offsetZ]
+// Menselijk skelet (model kijkt naar +Z, rechts = −X), afgeleid van de gewrichten van het
+// MakeHuman-lichaam in rustpose (armen recht omlaag). [ouder, offsetX, offsetY, offsetZ]
 // ---------------------------------------------------------------------------
 export const HB = {
   PELVIS: 0, SPINE: 1, HEAD: 2, UARM_R: 3, LARM_R: 4, UARM_L: 5, LARM_L: 6,
   THIGH_R: 7, SHIN_R: 8, THIGH_L: 9, SHIN_L: 10, HAND_R: 11, HAND_L: 12,
-  WPN_A: 13, WPN_B: 14, SHIELD: 15, CAPE: 16, EXTRA: 17,
+  WPN_A: 13, WPN_B: 14, SHIELD: 15, CAPE: 16, EXTRA: 17, FOOT_R: 18, FOOT_L: 19,
 };
+const d3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const HJ = HUMAN_JOINTS;
+export const PELVIS_Y = HJ.pelvis[1];
 export const HUMAN_SKEL = [
-  [-1, 0, 0.98, 0], // bekken
-  [0, 0, 0.08, 0], // romp
-  [1, 0, 0.47, 0], // hoofd (nek)
-  [1, -0.2, 0.42, 0], // bovenarm R
-  [3, 0, -0.28, 0], // onderarm R
-  [1, 0.2, 0.42, 0], // bovenarm L
-  [5, 0, -0.28, 0], // onderarm L
-  [0, -0.1, -0.02, 0], // dij R
-  [7, 0, -0.44, 0], // scheen R
-  [0, 0.1, -0.02, 0], // dij L
-  [9, 0, -0.44, 0], // scheen L
-  [4, 0, -0.26, 0.02], // hand R
-  [6, 0, -0.26, 0.02], // hand L
+  [-1, 0, HJ.pelvis[1], HJ.pelvis[2]], // bekken
+  [0, ...d3(HJ.spine, HJ.pelvis)], // romp (onderrug)
+  [1, ...d3(HJ.neck, HJ.spine)], // hoofd (nek)
+  [1, ...d3(HJ.shoulderR, HJ.spine)], // bovenarm R
+  [3, ...d3(HJ.elbowR, HJ.shoulderR)], // onderarm R
+  [1, ...d3(HJ.shoulderL, HJ.spine)], // bovenarm L
+  [5, ...d3(HJ.elbowL, HJ.shoulderL)], // onderarm L
+  [0, ...d3(HJ.hipR, HJ.pelvis)], // dij R
+  [7, ...d3(HJ.kneeR, HJ.hipR)], // scheen R
+  [0, ...d3(HJ.hipL, HJ.pelvis)], // dij L
+  [9, ...d3(HJ.kneeL, HJ.hipL)], // scheen L
+  [4, ...d3(HJ.wristR, HJ.elbowR)], // hand R (pols)
+  [6, ...d3(HJ.wristL, HJ.elbowL)], // hand L
   [11, 0, 0, 0], // wapen A
   [11, 0, 0, 0], // wapen B
   [6, 0.07, -0.14, 0], // schild
-  [1, 0, 0.4, -0.15], // cape
-  [1, 0.0, 0.25, -0.18], // extra (pijlkoker / vaandel)
+  [1, 0, 0.36, -0.13], // cape
+  [1, 0.0, 0.2, -0.16], // extra (pijlkoker / vaandel)
+  [8, ...d3(HJ.ankleR, HJ.kneeR)], // voet R
+  [10, ...d3(HJ.ankleL, HJ.kneeL)], // voet L
 ];
+// Rustpositie per bot in modelruimte (voor de skin-matrices); 0 = onderdeel in botruimte gemodelleerd
+export const HUMAN_BIND = (() => {
+  const b = new Float32Array(HUMAN_SKEL.length * 3);
+  const set = (i, p) => b.set(p, i * 3);
+  set(HB.PELVIS, HJ.pelvis);
+  set(HB.SPINE, HJ.spine);
+  set(HB.HEAD, HJ.neck);
+  set(HB.UARM_R, HJ.shoulderR);
+  set(HB.LARM_R, HJ.elbowR);
+  set(HB.UARM_L, HJ.shoulderL);
+  set(HB.LARM_L, HJ.elbowL);
+  set(HB.THIGH_R, HJ.hipR);
+  set(HB.SHIN_R, HJ.kneeR);
+  set(HB.THIGH_L, HJ.hipL);
+  set(HB.SHIN_L, HJ.kneeL);
+  set(HB.HAND_R, HJ.wristR);
+  set(HB.HAND_L, HJ.wristL);
+  set(HB.FOOT_R, HJ.ankleR);
+  set(HB.FOOT_L, HJ.ankleL);
+  return b;
+})();
 export const HUMAN_NB = HUMAN_SKEL.length;
 
 // ---------------------------------------------------------------------------
@@ -163,10 +190,10 @@ function setOff(pose, b, x, y, z) {
 
 // Waar een niet-gebruikt wapen hangt: [ouder, x, y, z, rx, ry, rz]
 const STOW = {
-  hip: [0, 0.2, -0.04, -0.06, 1.95, 0, -0.12],
-  belt: [0, -0.21, -0.02, 0.02, 1.85, 0, 0.12],
-  back: [1, 0.05, 0.22, -0.2, 1.57, 0, 0.55],
-  backLong: [1, 0.02, 0.1, -0.2, -1.45, 0, -0.3],
+  hip: [0, 0.19, 0.02, -0.03, 1.95, 0, -0.12],
+  belt: [0, -0.2, 0.03, 0.02, 1.85, 0, 0.12],
+  back: [1, 0.05, 0.12, -0.17, 1.57, 0, 0.55],
+  backLong: [1, 0.02, 0.0, -0.17, -1.45, 0, -0.3],
 };
 
 function stowWeapon(pose, bone, kind) {
@@ -189,6 +216,7 @@ const norm = (v) => {
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const EUL = [0, 0, 0];
 
 // Rotatiematrix met kolommen X, Y, Z → Euler XYZ (zelfde conventie als three.js)
@@ -205,6 +233,18 @@ function axesToEuler(X, Y, Z) {
   return EUL;
 }
 
+// De houdingen hieronder zijn geschreven in "romp-ruimte" met de schouders op 0.42 boven het
+// rompgewricht; K() zet zo'n punt om naar het echte lichaam (schouders lager en iets naar voren).
+const SH_R = sub3(HJ.shoulderR, HJ.spine);
+const SH_L = sub3(HJ.shoulderL, HJ.spine);
+const K_DY = SH_R[1] - 0.42;
+const K_DZ = SH_R[2];
+const K = (g) => [g[0], g[1] + K_DY, g[2] + K_DZ];
+const ARM_A = Math.hypot(...sub3(HJ.elbowR, HJ.shoulderR));
+const ARM_B = Math.hypot(...sub3(HJ.wristR, HJ.elbowR));
+const GRIP_R = sub3(HJ.gripR, HJ.wristR);
+const GRIP_L = sub3(HJ.gripL, HJ.wristL);
+
 // Wapen/schild vastzetten in romp-ruimte: greep op g, lokale +Z langs f, +Y richting hint h
 function hold(pose, bone, g, f, h) {
   const Z = norm([f[0], f[1], f[2]]);
@@ -214,16 +254,17 @@ function hold(pose, bone, g, f, h) {
   norm(X);
   const Y = cross(Z, X);
   const e = axesToEuler(X, Y, Z);
+  const G = K(g);
   pose.parent[bone] = HB.SPINE;
-  setOff(pose, bone, g[0], g[1], g[2]);
+  setOff(pose, bone, G[0], G[1], G[2]);
   setR(pose, bone, e[0], e[1], e[2]);
 }
 
-const ARM_A = 0.28;
-const ARM_B = 0.27;
-// Twee-bots-IK: hand (side −1 = rechts, +1 = links) naar doel t in romp-ruimte; elleboog richting pole.
-function ikArm(pose, side, t, pole) {
-  const S = [side * 0.2, 0.42, 0];
+// Twee-bots-IK: pols (side −1 = rechts, +1 = links) naar doel t (echte romp-ruimte); elleboog richting pole.
+// Geeft de assen van de onderarm (romp-ruimte) terug.
+const FA = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
+function ikRaw(pose, side, t, pole) {
+  const S = side < 0 ? SH_R : SH_L;
   const d = [t[0] - S[0], t[1] - S[1], t[2] - S[2]];
   let L = Math.hypot(d[0], d[1], d[2]) || 0.001;
   const u = [d[0] / L, d[1] / L, d[2] / L];
@@ -248,7 +289,36 @@ function ikArm(pose, side, t, pole) {
   const ua = side < 0 ? HB.UARM_R : HB.UARM_L;
   const la = side < 0 ? HB.LARM_R : HB.LARM_L;
   setR(pose, ua, e[0], e[1], e[2]);
-  setR(pose, la, -Math.acos(Math.max(-1, Math.min(1, fd))), 0, 0);
+  const th = -Math.acos(Math.max(-1, Math.min(1, fd)));
+  setR(pose, la, th, 0, 0);
+  const c = Math.cos(th);
+  const s = Math.sin(th);
+  FA.X = Xl;
+  FA.Y = [c * Yl[0] + s * Zl[0], c * Yl[1] + s * Zl[1], c * Yl[2] + s * Zl[2]];
+  FA.Z = [-s * Yl[0] + c * Zl[0], -s * Yl[1] + c * Zl[1], -s * Yl[2] + c * Zl[2]];
+  return FA;
+}
+// Arm naar een punt in de (oude) romp-ruimte; de hand blijft in het verlengde van de onderarm.
+function ikArm(pose, side, t, pole) {
+  ikRaw(pose, side, K(t), pole);
+}
+// Vuist om een greep: g = greeppunt (oude romp-ruimte), f = richting van het heft.
+function grip(pose, side, g, f, pole, upHint) {
+  const G = K(g);
+  const Z = norm([f[0], f[1], f[2]]);
+  const S = side < 0 ? SH_R : SH_L;
+  let y0 = upHint ? norm(upHint.slice()) : norm(sub3(S, G));
+  let Y = [y0[0] - dot(y0, Z) * Z[0], y0[1] - dot(y0, Z) * Z[1], y0[2] - dot(y0, Z) * Z[2]];
+  if (Math.hypot(Y[0], Y[1], Y[2]) < 1e-3) Y = Math.abs(Z[1]) < 0.9 ? [0, 1, 0] : [0, 0, -1];
+  norm(Y);
+  const X = cross(Y, Z);
+  const o = side < 0 ? GRIP_R : GRIP_L;
+  const W = [G[0] - (X[0] * o[0] + Y[0] * o[1] + Z[0] * o[2]), G[1] - (X[1] * o[0] + Y[1] * o[1] + Z[1] * o[2]), G[2] - (X[2] * o[0] + Y[2] * o[1] + Z[2] * o[2])];
+  const fa = ikRaw(pose, side, W, pole);
+  // handrotatie t.o.v. de onderarm: L = FA^T * H
+  const col = (v) => [dot(fa.X, v), dot(fa.Y, v), dot(fa.Z, v)];
+  const e = axesToEuler(col(X), col(Y), col(Z));
+  setR(pose, side < 0 ? HB.HAND_R : HB.HAND_L, e[0], e[1], e[2]);
 }
 
 const POLE_R = [-0.5, -0.6, -0.3];
@@ -268,11 +338,20 @@ function keyed(keys, t) {
   return [l[1], l[2]];
 }
 
+// Aanvallen: [tijd, greep, richting kling]. Uithalen (wind-up), doorslaan, terug in garde.
 const SLASH = [
-  [0, [-0.2, 0.12, 0.32], [0, 0.75, 0.65]],
-  [0.16, [-0.36, 0.62, -0.02], [0.25, 0.55, -0.8]],
-  [0.3, [0.14, -0.04, 0.42], [0.6, -0.45, 0.66]],
-  [0.5, [-0.2, 0.12, 0.32], [0, 0.75, 0.65]],
+  [0, [-0.2, 0.12, 0.32], [0.05, 0.75, 0.65]],
+  [0.14, [-0.36, 0.6, -0.04], [0.25, 0.55, -0.8]],
+  [0.24, [-0.14, 0.42, 0.42], [0.75, 0.2, 0.62]],
+  [0.32, [0.16, -0.04, 0.4], [0.6, -0.45, 0.66]],
+  [0.52, [-0.2, 0.12, 0.32], [0.05, 0.75, 0.65]],
+];
+const SLASH2 = [
+  [0, [-0.2, 0.12, 0.32], [0.05, 0.75, 0.65]],
+  [0.14, [0.12, 0.5, 0.18], [-0.55, 0.6, -0.4]],
+  [0.25, [-0.06, 0.3, 0.5], [-0.8, 0.1, 0.6]],
+  [0.34, [-0.38, 0.02, 0.3], [-0.6, -0.4, 0.6]],
+  [0.54, [-0.2, 0.12, 0.32], [0.05, 0.75, 0.65]],
 ];
 const SMASH = [
   [0, [-0.2, 0.12, 0.32], [0, 0.8, 0.55]],
@@ -299,49 +378,53 @@ function upperBody(pose, u, w, info) {
   const aimDir = (tw) => norm([-Math.sin(tw) * Math.cos(pitch), Math.sin(pitch), Math.cos(tw) * Math.cos(pitch)]);
 
   if (anim === 'bow') {
-    const tw = -0.45;
+    const tw = -0.5;
     setR(pose, HB.SPINE, 0.04, tw, 0);
-    setR(pose, HB.HEAD, -pitch * 0.5, -tw * 0.8, 0);
+    setR(pose, HB.HEAD, -pitch * 0.5, -tw * 0.85, 0);
     const a = aimDir(tw);
-    const B = add3([0.2, 0.4, 0], a, 0.5);
-    const stave = norm([0.18 - a[0] * 0, 1 - a[1] * a[1], 0]);
+    const B = add3([0.18, 0.42, 0.02], a, 0.52);
+    const stave = norm([0.12, 1, 0]);
     hold(pose, bone, B, stave, [-a[0], -a[1], -a[2]]);
-    ikArm(pose, 1, B, [0.3, -0.5, 0.2]);
+    grip(pose, 1, B, stave, [0.3, -0.5, 0.2], [-a[0], -a[1] - 0.2, -a[2]]);
     const draw = at < 0.12 ? 0.05 : smooth(clamp01((at - 0.15) / Math.max(0.3, w.cooldown * 0.55)));
     info.bowDraw = draw;
-    ikArm(pose, -1, add3(add3(B, a, -(0.12 + draw * 0.46)), [0.02, 0.05, 0]), [-0.2, 0.3, -0.8]);
+    const P = add3(add3(B, a, -(0.14 + draw * 0.5)), [0.02, 0.03, 0]);
+    grip(pose, -1, P, [0, 1, 0], [-0.2, 0.3, -0.8], [a[0], a[1], a[2]]);
     return;
   }
   if (anim === 'crossbow' || anim === 'gun') {
     const reload = at > 0.25 && at < w.cooldown - 0.35;
     if (reload) {
-      setR(pose, HB.SPINE, 0.22, -0.15, 0);
-      setR(pose, HB.HEAD, 0.25, 0, 0);
+      setR(pose, HB.SPINE, 0.28, -0.15, 0);
+      setR(pose, HB.HEAD, 0.3, 0, 0);
       if (anim === 'crossbow') {
+        // kruisboog met de voet in de stijgbeugel en de spanhaak/windas
         const G = [0.0, -0.22, 0.36];
         const f = norm([0, -0.85, 0.5]);
         hold(pose, bone, G, f, [0, 0, 1]);
         const c = at * 7;
-        ikArm(pose, -1, add3(add3(G, f, -0.22), [Math.cos(c) * 0.07, Math.sin(c) * 0.07, 0]), POLE_R);
-        ikArm(pose, 1, add3(G, f, 0.22), POLE_L);
+        grip(pose, -1, add3(add3(G, f, -0.22), [Math.cos(c) * 0.07 - 0.04, Math.sin(c) * 0.07, 0]), f, POLE_R);
+        grip(pose, 1, add3(G, f, 0.16), f, POLE_L);
       } else {
+        // haakbus laden: loop omhoog, laadstok
         const G = [0.06, -0.12, 0.3];
         const f = norm([0, 1, 0.12]);
         hold(pose, bone, G, f, [0, 0, -1]);
-        ikArm(pose, 1, add3(G, f, 0.3), POLE_L);
-        ikArm(pose, -1, add3(G, f, 0.62 + Math.sin(at * 6) * 0.18), POLE_R);
+        grip(pose, 1, add3(G, f, 0.3), f, POLE_L);
+        grip(pose, -1, add3(G, f, 0.62 + Math.sin(at * 6) * 0.18), [0, -1, 0], POLE_R);
       }
       return;
     }
     const tw = -0.35;
     setR(pose, HB.SPINE, 0.02, tw, 0);
-    setR(pose, HB.HEAD, -pitch * 0.5 + 0.08, -tw * 0.7, 0.1);
+    setR(pose, HB.HEAD, -pitch * 0.5 + 0.12, -tw * 0.7, 0.12);
     const a = aimDir(tw);
     const recoil = at < 0.25 ? (1 - at / 0.25) * 0.12 : 0;
     const G = add3(add3([-0.13, 0.33, 0.12], a, 0.12 - recoil), [0, recoil * 0.5, 0]);
-    hold(pose, bone, G, [a[0], a[1] + recoil * 2, a[2]], [0, 1, 0]);
-    ikArm(pose, -1, G, POLE_R);
-    ikArm(pose, 1, add3(add3(G, a, 0.34), [0, -0.05, 0]), POLE_L);
+    const f = [a[0], a[1] + recoil * 2, a[2]];
+    hold(pose, bone, G, f, [0, 1, 0]);
+    grip(pose, -1, G, f, POLE_R);
+    grip(pose, 1, add3(add3(G, a, 0.32), [0, -0.04, 0]), f, POLE_L);
     return;
   }
   if (anim === 'siphon') {
@@ -349,29 +432,31 @@ function upperBody(pose, u, w, info) {
     const G = [-0.12, 0.05 + j, 0.3];
     const f = [0, 0.05 + pitch * 0.5, 1];
     hold(pose, bone, G, f, [0, 1, 0]);
-    ikArm(pose, -1, G, POLE_R);
-    ikArm(pose, 1, add3(add3(G, norm(f.slice()), 0.28), [0, -0.06, 0]), POLE_L);
+    grip(pose, -1, G, f, POLE_R);
+    grip(pose, 1, add3(add3(G, norm(f.slice()), 0.28), [0, -0.06, 0]), f, POLE_L);
     return;
   }
   if (anim === 'throw') {
     const k = clamp01(at / 0.5);
     const back = k < 0.35 ? smooth(k / 0.35) : 1 - smooth((k - 0.35) / 0.65);
-    setR(pose, HB.SPINE, 0, -0.4 * back, 0);
-    const G = lerp3([-0.2, 0.25, 0.25], [-0.32, 0.55, -0.2], back);
-    hold(pose, bone, G, norm([0, 0.25 + pitch, 1]), [0, 1, 0]);
-    ikArm(pose, -1, G, POLE_R);
+    setR(pose, HB.SPINE, 0, -0.45 * back, 0);
+    const G = lerp3([-0.2, 0.25, 0.25], [-0.32, 0.6, -0.22], back);
+    const f = norm([0, 0.25 + pitch, 1]);
+    hold(pose, bone, G, f, [0, 1, 0]);
+    grip(pose, -1, G, f, POLE_R);
     ikArm(pose, 1, [0.25, 0.15 + back * 0.15, 0.32], POLE_L);
     return;
   }
   if (anim === 'cry' && at < 1.6) {
     const k = Math.min(1, at / 0.25) * Math.min(1, (1.6 - at) / 0.3);
-    const G = lerp3([-0.2, 0.12, 0.32], [-0.24, 0.92, 0.1], k);
-    hold(pose, bone, G, norm([0, 1, 0.2]), [0, 0, 1]);
-    ikArm(pose, -1, G, POLE_R);
+    const G = lerp3([-0.2, 0.12, 0.32], [-0.24, 0.95, 0.12], k);
+    const f = norm([0, 1, 0.2]);
+    hold(pose, bone, G, f, [0, 0, 1]);
+    grip(pose, -1, G, f, POLE_R);
     setR(pose, HB.HEAD, -0.35 * k, 0, 0);
   } else if (anim === 'thrust' || anim === 'couch') {
     const k = at < 0.45 ? (at < 0.15 ? smooth(at / 0.15) : 1 - smooth((at - 0.15) / 0.3)) : 0;
-    setR(pose, HB.SPINE, 0.05, -0.18 + k * 0.15, 0);
+    setR(pose, HB.SPINE, 0.06 + k * 0.08, -0.18 + k * 0.15, 0);
     const twoH = two || !shieldOnArm;
     let G;
     let f;
@@ -388,44 +473,64 @@ function upperBody(pose, u, w, info) {
       G = add3(G, f, k * 0.45);
     }
     hold(pose, bone, G, f, [0, 1, 0]);
-    ikArm(pose, -1, G, POLE_R);
+    grip(pose, -1, G, f, POLE_R);
     if (twoH && anim !== 'couch') {
-      ikArm(pose, 1, add3(G, f, 0.5), POLE_L);
+      grip(pose, 1, add3(G, f, 0.45), f, POLE_L);
       freeLeft = false;
     }
   } else if (anim === 'chop') {
     const [G, f] = at < 0.65 ? keyed(CHOP, at) : [CHOP[0][1], norm(CHOP[0][2].slice())];
     setR(pose, HB.SPINE, 0.05, -0.15, 0);
     hold(pose, bone, G, f, [0, 0, 1]);
-    ikArm(pose, -1, G, POLE_R);
-    ikArm(pose, 1, add3(G, f, 0.5), POLE_L);
+    grip(pose, -1, G, f, POLE_R);
+    grip(pose, 1, add3(G, f, 0.42), f, POLE_L);
     freeLeft = false;
   } else if (w && w.kind === 'melee') {
-    // zwaard / knots / bijl / houweel
-    const keys = anim === 'smash' ? SMASH : SLASH;
+    // zwaard / knots / bijl / houweel: afwisselend van rechts en van links
+    const keys = anim === 'smash' ? SMASH : (u.swingN || 0) % 2 ? SLASH2 : SLASH;
     const dur = keys[keys.length - 1][0];
     const [G0, f] = at < dur ? keyed(keys, at) : [keys[0][1], norm(keys[0][2].slice())];
     const G = two ? [G0[0] + 0.08, G0[1], G0[2]] : G0;
     const k = at < dur ? Math.sin((at / dur) * Math.PI) : 0;
-    setR(pose, HB.SPINE, 0.04 + k * 0.12, -0.1 + (anim === 'smash' ? 0 : k * 0.35), 0);
+    const dir = keys === SLASH2 ? -1 : 1;
+    setR(pose, HB.SPINE, 0.05 + k * 0.12, -0.1 + (anim === 'smash' ? 0 : k * 0.4 * dir), 0);
     hold(pose, bone, G, f, [0, 0, 1]);
-    ikArm(pose, -1, G, POLE_R);
+    grip(pose, -1, G, f, POLE_R);
     if (two) {
-      ikArm(pose, 1, add3(G, f, -0.12), POLE_L);
+      grip(pose, 1, add3(G, f, -0.13), f, POLE_L);
       freeLeft = false;
     }
   }
 
-  // schild aan de linkerarm
+  // schild aan de linkerarm; bij een geblokte klap hoger en naar voren
   if (shieldOnArm) {
     const bash = at < 0.3 ? Math.sin((at / 0.3) * Math.PI) * 0.06 : 0;
-    const S = [0.2, 0.1, 0.36 + bash];
-    hold(pose, HB.SHIELD, S, norm([-0.28, 0, 1]), [0, 1, 0]);
-    ikArm(pose, 1, [S[0] + 0.02, S[1] - 0.02, S[2] - 0.08], POLE_L);
+    const bt = u.blockT ?? 9;
+    const blk = bt < 0.5 ? Math.sin(Math.min(1, bt / 0.12) * Math.PI * 0.5) * (1 - smooth(clamp01((bt - 0.3) / 0.2))) : 0;
+    const S = [0.18 - blk * 0.05, 0.12 + blk * 0.18, 0.38 + bash + blk * 0.06];
+    hold(pose, HB.SHIELD, S, norm([-0.3 - blk * 0.1, 0, 1]), [0, 1, 0]);
+    grip(pose, 1, [S[0] + 0.02, S[1] - 0.02, S[2] - 0.09], [1, 0, 0.2], POLE_L);
   } else if (freeLeft) {
     const sw = info.armSwing || 0;
-    ikArm(pose, 1, [0.27, -0.3, 0.05 + sw * 0.25], [0.4, -0.2, -0.6]);
+    setR(pose, HB.UARM_L, -sw * 0.8 + 0.02, 0, 0.09 + info.armOut);
+    setR(pose, HB.LARM_L, -0.25 - Math.max(0, sw) * 0.4 - info.armBend, 0, 0);
   }
+}
+
+// Loopcyclus per been: p = fase 0..1 vanaf de hielslag. Geeft heup, knie, enkel (rad).
+function gauss(p, c, w) {
+  let d = p - c;
+  d -= Math.round(d);
+  return Math.exp(-(d * d) / (2 * w * w));
+}
+function legCycle(p, run) {
+  const walkHip = 0.33 * Math.cos(p * Math.PI * 2) + 0.05;
+  const walkKnee = 0.28 * gauss(p, 0.13, 0.07) + 1.08 * gauss(p, 0.72, 0.11) + 0.05;
+  const walkAnk = -0.16 * gauss(p, 0.05, 0.04) + 0.14 * gauss(p, 0.42, 0.1) - 0.32 * gauss(p, 0.62, 0.05) + 0.08 * gauss(p, 0.85, 0.06);
+  const runHip = 0.55 * Math.cos(p * Math.PI * 2 - 0.25) + 0.12;
+  const runKnee = 0.55 * gauss(p, 0.12, 0.08) + 1.75 * gauss(p, 0.62, 0.14) + 0.15;
+  const runAnk = -0.2 * gauss(p, 0.03, 0.04) + 0.15 * gauss(p, 0.22, 0.07) - 0.45 * gauss(p, 0.38, 0.06);
+  return [walkHip + (runHip - walkHip) * run, walkKnee + (runKnee - walkKnee) * run, walkAnk + (runAnk - walkAnk) * run];
 }
 
 // Volledige menselijke pose. info: { shield, cape, weaponA, weaponB, ... } uit het model.
@@ -433,6 +538,7 @@ export function poseHuman(pose, u, info, t, mountedYawOffset = 0) {
   resetPose(pose, HUMAN_SKEL);
   const w = u.weapons[u.wi];
   const speed = u.speed || 0;
+  const v = u.variant || 0;
 
   // ---- wapens: actief in de hand, de rest opgeborgen ----
   const wa = info.weaponA;
@@ -451,97 +557,165 @@ export function poseHuman(pose, u, info, t, mountedYawOffset = 0) {
     const onArm = w && (w.kind === 'melee' || w.kind === 'thrown') && !w.twoHanded && info.shield !== 'pavise';
     if (!onArm) {
       pose.parent[HB.SHIELD] = HB.SPINE;
-      setOff(pose, HB.SHIELD, 0, 0.22, info.shield === 'pavise' ? -0.24 : -0.21);
+      setOff(pose, HB.SHIELD, 0, 0.12, info.shield === 'pavise' ? -0.2 : -0.17);
       setR(pose, HB.SHIELD, 0, Math.PI, 0);
     } else info.shieldOnArm = true;
   } else pose.scale[HB.SHIELD] = 0;
 
   // pavese: neergezet voor de schutter als die stilstaat met kruisboog/haakbus
-  if (info.shield === 'pavise' && w && w.kind === 'ranged' && speed < 0.3 && !u.mounted && u.y < 0.5) {
+  if (info.shield === 'pavise' && w && w.kind === 'ranged' && speed < 0.3 && !u.mounted && u.y < 0.5 && !(u.airT > 0)) {
     pose.parent[HB.SHIELD] = HB.PELVIS;
     setOff(pose, HB.SHIELD, 0.05, -0.38, 0.75);
     setR(pose, HB.SHIELD, -0.12, 0, 0);
   }
 
-  // ---- dood ----
+  // ---- dood: eerst door de knieën, dan voorover/achterover/opzij ----
   if (!u.alive) {
-    const k = smooth(clamp01(u.deadT / 0.7));
-    const fwd = (u.variant & 1) === 0;
-    setR(pose, HB.SPINE, fwd ? 0.2 * k : -0.25 * k, 0, 0);
-    setR(pose, HB.HEAD, fwd ? 0.3 * k : -0.4 * k, 0.4 * k * ((u.variant & 2) ? 1 : -1), 0);
-    setR(pose, HB.UARM_R, -0.4 * (1 - k) - (fwd ? 2.6 : 1.6) * k, 0, -0.4 * k);
-    setR(pose, HB.LARM_R, -0.3, 0, 0);
-    setR(pose, HB.UARM_L, -0.4 * (1 - k) - (fwd ? 2.4 : 1.2) * k, 0, 0.5 * k);
-    setR(pose, HB.LARM_L, -0.4, 0, 0);
-    setR(pose, HB.THIGH_R, -0.15 * k, 0, -0.1 * k);
-    setR(pose, HB.SHIN_R, 0.35 * k, 0, 0);
-    setR(pose, HB.THIGH_L, 0.1 * k, 0, 0.12 * k);
-    setR(pose, HB.SHIN_L, 0.15 * k, 0, 0);
+    const dt = u.deadT || 0;
+    const k1 = smooth(clamp01(dt / 0.32));
+    const k2 = smooth(clamp01((dt - 0.18) / 0.62));
+    const kind = v % 3; // 0 = voorover, 1 = achterover, 2 = opzij
+    const fwd = kind !== 1;
+    // knieën knikken
+    const kneel = k1 * (1 - k2 * 0.7);
+    setR(pose, HB.THIGH_R, -0.9 * kneel - (fwd ? 0.1 : -0.2) * k2, 0, -0.05 * k2);
+    setR(pose, HB.THIGH_L, -0.6 * kneel - (fwd ? 0 : -0.15) * k2, 0, 0.1 * k2);
+    setR(pose, HB.SHIN_R, 1.5 * kneel + 0.25 * k2, 0, 0);
+    setR(pose, HB.SHIN_L, 1.2 * kneel + 0.5 * k2, 0, 0);
+    setR(pose, HB.FOOT_R, 0.4 * k2, 0, 0);
+    setR(pose, HB.FOOT_L, 0.5 * k2, 0, 0);
+    pose.off[HB.PELVIS * 3 + 1] = PELVIS_Y - 0.32 * kneel;
+    setR(pose, HB.SPINE, fwd ? 0.35 * k1 - 0.15 * k2 : -0.2 * k1 - 0.15 * k2, kind === 2 ? 0.3 * k2 : 0, kind === 2 ? 0.25 * k2 : 0);
+    setR(pose, HB.HEAD, fwd ? 0.3 * k1 - 0.5 * k2 : -0.4 * k2, 0.6 * k2 * ((v & 2) ? 1 : -1), 0);
+    // armen: slap, bij het neervallen uitgestrekt
+    setR(pose, HB.UARM_R, -0.5 * k1 - (fwd ? 2.4 : 1.4) * k2, 0, -0.35 - 0.3 * k2);
+    setR(pose, HB.LARM_R, -0.4 - 0.3 * k2, 0, 0);
+    setR(pose, HB.UARM_L, -0.3 * k1 - (fwd ? 2.2 : 1.1) * k2, 0, 0.35 + 0.35 * k2);
+    setR(pose, HB.LARM_L, -0.5, 0, 0);
     if (u.mounted) {
-      setR(pose, HB.THIGH_R, -0.5 * k, 0, 0);
-      setR(pose, HB.THIGH_L, -0.3 * k, 0, 0);
+      setR(pose, HB.THIGH_R, -0.5 * k1, 0, 0);
+      setR(pose, HB.THIGH_L, -0.3 * k1, 0, 0);
     }
+    // het gevallen wapen ligt naast het lichaam
     pose.scale[HB.WPN_B] = 0;
-    info.deathTilt = (fwd ? 1 : -1) * k * 1.48;
-    info.deathDrop = k * 0.84;
+    info.deathTilt = (fwd ? 1 : -1) * k2 * 1.5;
+    info.deathRoll = kind === 2 ? k2 * 0.25 : 0;
+    info.deathDrop = 0;
     return;
   }
   info.deathTilt = 0;
+  info.deathRoll = 0;
   info.deathDrop = 0;
   info.armSwing = 0;
+  info.armOut = 0;
+  info.armBend = 0;
 
-  // ---- onderlichaam: lopen/rennen/staan/klimmen/rijden ----
-  if (u.mounted) {
-    setR(pose, HB.THIGH_R, -1.05, 0, -0.42);
-    setR(pose, HB.THIGH_L, -1.05, 0, 0.42);
-    setR(pose, HB.SHIN_R, 1.25, 0, 0);
-    setR(pose, HB.SHIN_L, 1.25, 0, 0);
-    const bob = Math.sin(u.gait * 2) * 0.04 * Math.min(1, speed / 6);
-    addR(pose, HB.SPINE, 0.1 + bob, mountedYawOffset, 0);
+  // ---- onderlichaam: lopen/rennen/staan/klimmen/rijden/springen ----
+  const mountK = u.mountT != null ? clamp01(u.mountT) : u.mounted ? 1 : 0;
+  if (u.mounted || mountK > 0) {
+    // in het zadel: dijen gespreid om de paardenflanken, voeten in de stijgbeugels
+    const k = smooth(mountK);
+    const swing = u.mountT != null && mountK < 1 ? Math.sin(mountK * Math.PI) : 0;
+    setR(pose, HB.THIGH_R, -1.0 * k - swing * 0.6, 0, -0.42 * k);
+    setR(pose, HB.THIGH_L, -1.0 * k + swing * 0.9, 0, 0.42 * k + swing * 0.5);
+    setR(pose, HB.SHIN_R, 1.2 * k, 0, 0);
+    setR(pose, HB.SHIN_L, 1.2 * k + swing * 0.4, 0, 0);
+    setR(pose, HB.FOOT_R, -0.25 * k, 0, 0);
+    setR(pose, HB.FOOT_L, -0.25 * k, 0, 0);
+    const gal = Math.min(1, speed / 7);
+    const bob = Math.sin(u.gait * 2) * 0.05 * gal;
+    addR(pose, HB.SPINE, 0.08 + bob + gal * 0.12, mountedYawOffset, 0);
+    setR(pose, HB.HEAD, -bob * 0.6 - gal * 0.08, 0, 0);
+    // vrije linkerhand aan de teugels
+    info.armSwing = 0;
+    info.armOut = -0.05;
+    info.armBend = 0.9 * k;
   } else if (u.climb) {
     const c = Math.sin(t * 9);
     setR(pose, HB.THIGH_R, -0.9 + c * 0.5, 0, 0);
     setR(pose, HB.SHIN_R, 1.0 - c * 0.3, 0, 0);
     setR(pose, HB.THIGH_L, -0.9 - c * 0.5, 0, 0);
     setR(pose, HB.SHIN_L, 1.0 + c * 0.3, 0, 0);
-    setR(pose, HB.SPINE, 0.3, 0, 0);
-    setR(pose, HB.UARM_R, -2.4 + c * 0.4, 0, 0);
-    setR(pose, HB.UARM_L, -2.4 - c * 0.4, 0, 0);
+    setR(pose, HB.FOOT_R, -0.3, 0, 0);
+    setR(pose, HB.FOOT_L, -0.3, 0, 0);
+    setR(pose, HB.SPINE, 0.25, 0, 0);
+    setR(pose, HB.UARM_R, -2.5 + c * 0.4, 0, -0.1);
+    setR(pose, HB.LARM_R, -0.5, 0, 0);
+    setR(pose, HB.UARM_L, -2.5 - c * 0.4, 0, 0.1);
+    setR(pose, HB.LARM_L, -0.5, 0, 0);
     return;
+  } else if (u.airT > 0) {
+    // sprong: afzetten, benen intrekken, landen
+    const up = (u.vy || 0) > 0;
+    const tuck = up ? 0.6 : 0.35;
+    setR(pose, HB.THIGH_R, -tuck - 0.25, 0, -0.03);
+    setR(pose, HB.THIGH_L, -tuck + 0.15, 0, 0.03);
+    setR(pose, HB.SHIN_R, tuck * 1.6, 0, 0);
+    setR(pose, HB.SHIN_L, tuck * 1.2 + 0.2, 0, 0);
+    setR(pose, HB.FOOT_R, 0.3, 0, 0);
+    setR(pose, HB.FOOT_L, 0.3, 0, 0);
+    setR(pose, HB.SPINE, 0.12, 0, 0);
+    info.armSwing = up ? -0.6 : 0.2;
+    info.armOut = 0.25;
   } else {
-    const g = u.gait;
-    const run = clamp01((speed - 2.6) / 2.4);
-    const amp = Math.min(1, speed / 1.6);
-    const legA = (0.42 + run * 0.38) * amp;
-    const s = Math.sin(g);
-    const c = Math.cos(g);
-    setR(pose, HB.THIGH_R, -s * legA - run * 0.15, 0, 0);
-    setR(pose, HB.THIGH_L, s * legA - run * 0.15, 0, 0);
-    setR(pose, HB.SHIN_R, Math.max(0, c) * (0.55 + run * 0.6) * amp + 0.05, 0, 0);
-    setR(pose, HB.SHIN_L, Math.max(0, -c) * (0.55 + run * 0.6) * amp + 0.05, 0, 0);
-    setR(pose, HB.SPINE, run * 0.18, s * 0.08 * amp, 0);
-    setR(pose, HB.PELVIS, 0, -s * 0.1 * amp, 0);
-    pose.off[HB.PELVIS * 3 + 1] = 0.98 - Math.abs(c) * 0.035 * amp - run * 0.04;
-    // ademhaling in rust
-    if (speed < 0.2) {
-      const br = Math.sin(t * 1.7 + u.variant) * 0.015;
-      addR(pose, HB.SPINE, br, 0, 0);
-      setR(pose, HB.THIGH_R, 0.02, 0, -0.04);
-      setR(pose, HB.THIGH_L, -0.02, 0, 0.04);
+    const g = u.gait || 0;
+    const run = clamp01((speed - 2.8) / 2.2);
+    const amp = Math.min(1, speed / 1.4);
+    const ph = g / (Math.PI * 2);
+    const pr = ph - Math.floor(ph);
+    const pl = pr + 0.5;
+    const [hr, kr, ar] = legCycle(pr, run);
+    const [hl, kl, al] = legCycle(pl, run);
+    // heup naar voren = negatieve X-rotatie
+    setR(pose, HB.THIGH_R, -hr * amp - run * 0.12, 0, -0.03);
+    setR(pose, HB.THIGH_L, -hl * amp - run * 0.12, 0, 0.03);
+    setR(pose, HB.SHIN_R, kr * amp + 0.04, 0, 0);
+    setR(pose, HB.SHIN_L, kl * amp + 0.04, 0, 0);
+    setR(pose, HB.FOOT_R, ar * amp - (kr * amp) * 0.15, 0, 0);
+    setR(pose, HB.FOOT_L, al * amp - (kl * amp) * 0.15, 0, 0);
+    // bekken: op en neer (laagste bij de hielslag), draaien en kantelen
+    const s2 = Math.cos(pr * Math.PI * 4);
+    pose.off[HB.PELVIS * 3 + 1] = PELVIS_Y - (0.022 + run * 0.03) * amp * (0.5 + 0.5 * s2) - run * 0.05;
+    setR(pose, HB.PELVIS, run * 0.04, Math.cos(pr * Math.PI * 2) * 0.09 * amp, Math.sin(pr * Math.PI * 4) * 0.035 * amp);
+    // romp draait tegen het bekken in, licht voorover bij rennen
+    setR(pose, HB.SPINE, run * 0.2 + 0.02, -Math.cos(pr * Math.PI * 2) * 0.12 * amp, -Math.sin(pr * Math.PI * 4) * 0.03 * amp);
+    setR(pose, HB.HEAD, -run * 0.12, Math.cos(pr * Math.PI * 2) * 0.03 * amp, 0);
+    info.armSwing = Math.cos(pr * Math.PI * 2) * (0.32 + run * 0.35) * amp;
+    info.armBend = run * 1.0;
+    info.armOut = 0.02;
+    // rust: gewicht verplaatsen, ademen, af en toe rondkijken
+    if (speed < 0.25) {
+      const sway = Math.sin(t * 0.55 + v * 1.7);
+      const br = Math.sin(t * 1.6 + v) * 0.012;
+      pose.off[HB.PELVIS * 3] = sway * 0.018;
+      pose.off[HB.PELVIS * 3 + 1] = PELVIS_Y - 0.006;
+      setR(pose, HB.PELVIS, 0, 0.04 * Math.sin(v), -sway * 0.03);
+      setR(pose, HB.SPINE, 0.03 + br, 0, sway * 0.025);
+      setR(pose, HB.THIGH_R, -0.03, 0, -0.06 + sway * 0.03);
+      setR(pose, HB.THIGH_L, 0.04, 0, 0.07 + sway * 0.03);
+      setR(pose, HB.SHIN_R, 0.06 + Math.max(0, sway) * 0.08, 0, 0);
+      setR(pose, HB.SHIN_L, 0.06 + Math.max(0, -sway) * 0.08, 0, 0);
+      setR(pose, HB.FOOT_R, -0.03, 0, 0.06);
+      setR(pose, HB.FOOT_L, -0.04, 0, -0.07);
+      const look = Math.sin(t * 0.23 + v * 2.3);
+      setR(pose, HB.HEAD, -0.02, look > 0.6 ? (look - 0.6) * 1.2 : look < -0.7 ? (look + 0.7) * 1.0 : 0, 0);
+      info.armSwing = br * 2;
+      info.armOut = 0.03;
+      info.armBend = 0.15;
     }
-    info.armSwing = s * 0.35 * amp;
   }
 
   // ---- bovenlichaam ----
   upperBody(pose, u, w, info);
   // getroffen: kort terugdeinzen
-  if (u.hitT < 0.25) {
-    const h = Math.sin((u.hitT / 0.25) * Math.PI);
-    addR(pose, HB.SPINE, -0.25 * h, 0, 0.08 * h);
+  if (u.hitT < 0.3) {
+    const h = Math.sin((u.hitT / 0.3) * Math.PI);
+    addR(pose, HB.SPINE, -0.25 * h, 0.1 * h * ((v & 1) ? 1 : -1), 0.08 * h);
     addR(pose, HB.HEAD, -0.3 * h, 0, 0);
+    addR(pose, HB.SHIN_R, 0.2 * h, 0, 0);
   }
   // cape wappert licht
-  setR(pose, HB.CAPE, 0.08 + Math.min(0.5, speed * 0.06) + Math.sin(t * 2.3 + u.variant) * 0.03, 0, 0);
+  setR(pose, HB.CAPE, 0.08 + Math.min(0.5, speed * 0.06) + Math.sin(t * 2.3 + v) * 0.03, 0, 0);
 }
 
 // ---------------------------------------------------------------------------

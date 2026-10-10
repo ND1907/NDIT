@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CrowdRenderer } from './crowd.js';
-import { HUMAN_NB, HORSE_NB, SIEGE_NB, makePose, poseHuman, poseHorse, poseSiege, setRoot, writeBones, HUMAN_SKEL, HORSE_SKEL, SIEGE_SKEL } from './rig.js';
-import { buildUnitModel, buildHorseModel, buildSiegeModel, buildBanner } from './models.js';
+import { HUMAN_NB, HORSE_NB, SIEGE_NB, makePose, poseHuman, poseHorse, poseSiege, setRoot, writeBones, HUMAN_SKEL, HORSE_SKEL, SIEGE_SKEL, HUMAN_BIND } from './rig.js';
+import { buildUnitModel, buildHorseModel, buildSiegeModel, buildBanner, unitTextures, neutralTextures } from './models.js';
 import { WorldView } from './world.js';
 import { FxView } from './fx.js';
 import { UNITS, WEAPONS, FACTIONS } from '../sim/data.js';
@@ -102,7 +102,7 @@ export class GameView {
     this.fx = new FxView(this.scene, this.quality);
     this.fx.syncFog(this.scene.fog);
     const cap = Math.max(400, match.teams.reduce((a, t) => a + (t.cap || match.cap), 0) * 1.6 + 120);
-    this.humans = new CrowdRenderer(this.scene, { nb: HUMAN_NB, capacity: Math.round(cap), quality: this.quality, name: 'mens' });
+    this.humans = new CrowdRenderer(this.scene, { nb: HUMAN_NB, capacity: Math.round(cap), quality: this.quality, name: 'mens', bind: HUMAN_BIND });
     this.horses = new CrowdRenderer(this.scene, { nb: HORSE_NB, capacity: Math.round(cap * 0.5), quality: this.quality, name: 'paard' });
     this.siege = new CrowdRenderer(this.scene, { nb: SIEGE_NB, capacity: 64, quality: this.quality, name: 'tuig' });
     this.hPose = makePose(HUMAN_SKEL);
@@ -127,22 +127,24 @@ export class GameView {
     const key = def.id + (banner ? '+vaandel' : '');
     if (this.humans.types.has(key)) return;
     const weapons = def.weapons.map((w) => WEAPONS[w]);
-    const hi = buildUnitModel(def, weapons, 0);
-    const lo = buildUnitModel(def, weapons, 1);
-    let g0 = hi.geo;
-    let g1 = lo.geo;
-    if (banner) {
+    const models = [0, 1, 2].map((l) => buildUnitModel(def, weapons, l));
+    const geos = models.map((m, l) => {
+      if (!banner) return m.geo;
       const f = FACTIONS[def.faction];
-      g0 = mergeGeometries([g0, buildBanner(f.color, f.color2, 0)]);
-      g1 = mergeGeometries([g1, buildBanner(f.color, f.color2, 1)]);
-    }
-    const shadowDist = this.quality === 'high' ? 70 : 40;
-    this.humans.addType(key, [
-      { geo: g0, maxDist: shadowDist, shadow: true },
-      { geo: g0, maxDist: 55, shadow: false },
-      { geo: g1, maxDist: Infinity, shadow: false },
-    ].filter((l, i) => !(i === 1 && shadowDist >= 55)));
-    this.info.set(key, hi.info);
+      return mergeGeometries([m.geo, buildBanner(f.color, f.color2, Math.min(1, l))]);
+    });
+    const q = this.quality;
+    // dichtbij het volle lichaam (met schaduw), daarna steeds eenvoudiger
+    this.humans.addType(
+      key,
+      [
+        { geo: geos[0], maxDist: q === 'low' ? 8 : 16, shadow: q !== 'low' },
+        { geo: geos[1], maxDist: q === 'low' ? 30 : 55, shadow: q === 'high' },
+        { geo: geos[2], maxDist: Infinity, shadow: false },
+      ],
+      unitTextures(def, q),
+    );
+    this.info.set(key, models[0].info);
   }
 
   _horseType(faction) {
@@ -151,14 +153,14 @@ export class GameView {
     this.horses.addType(key, [
       { geo: buildHorseModel(faction, 0), maxDist: this.quality === 'high' ? 70 : 40, shadow: true },
       { geo: buildHorseModel(faction, 1), maxDist: Infinity, shadow: false },
-    ]);
+    ], neutralTextures());
   }
 
   _siegeType(def) {
     const kind = def.role === 'siege' ? def.weapons[0] : def.role;
     const key = 'tuig:' + kind;
     if (this.siege.types.has(key)) return;
-    this.siege.addType(key, [{ geo: buildSiegeModel(kind, 0), maxDist: Infinity, shadow: true }]);
+    this.siege.addType(key, [{ geo: buildSiegeModel(kind, 0), maxDist: Infinity, shadow: true }], neutralTextures());
   }
 
   disposeMatch() {
@@ -251,7 +253,7 @@ export class GameView {
         }
       }
       if (!u.alive && u.deadT > 21) y -= (u.deadT - 21) * 0.25;
-      const root = setRoot(x, y + Math.abs(tilt) * 0.1, z, u.yaw, tilt, 0, inf.scale);
+      const root = setRoot(x, y + Math.abs(tilt) * 0.06, z, u.yaw, tilt, inf.deathRoll || 0, inf.scale);
       writeBones(data, o, root, hPose, HUMAN_NB);
       const s = SKIN[u.variant % SKIN.length];
       data[to] = s[0];
