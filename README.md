@@ -91,10 +91,19 @@ vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander o
 
 ## Starten
 
+### Online spelen (GitHub Pages)
+
+De `index.html` in de hoofdmap is het complete spel in één bestand. Alle code, stijlen en het pictogram zitten erin;
+er zijn geen externe of absolute paden. GitHub Pages kan hem dus direct publiceren
+(*Settings → Pages → Deploy from a branch → `main` / `(root)`*).
+
 ### Snelle demo (Windows/Mac/Linux)
 
-Dubbelklik op `demo/fetih-1453.html`. Het hele spel zit in dat ene bestand en start in
-Chrome, Edge of Firefox, ook zonder internet. Opnieuw maken na wijzigingen: `npm run build:demo`.
+Dubbelklik op `index.html` (of `demo/fetih-1453.html`, hetzelfde bestand). Het spel start in
+Chrome, Edge of Firefox, ook zonder internet.
+
+**Na wijzigingen in de code:** draai `npm run build:demo`. Dat maakt `index.html` en `demo/fetih-1453.html` opnieuw;
+commit ze daarna mee, anders blijft de website de oude versie tonen.
 
 ### Ontwikkelen
 
@@ -161,6 +170,8 @@ src/
               animaties, IK) · models.js (modellen per eenheid) · world.js (terrein, forten) · fx.js · textures.js
   ui/hud.js   HUD, minimap, leiderbalken, aankondigingen
   main.js     menu's, opzet, rolkeuze, pauze, instellingen, uitslag
+app.html      bron-HTML voor Vite (npm run dev / build); wordt dist/index.html
+index.html    gebouwde game in één bestand (GitHub Pages), via npm run build:demo
   controls.js touch + toetsenbord/muis
   audio.js    geluid en muziek
 tests/        Vitest-tests

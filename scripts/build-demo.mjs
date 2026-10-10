@@ -1,21 +1,25 @@
-// Bouwt de game als één los HTML-bestand (alle JS/CSS ingebakken) om snel te testen
-// op een laptop: dubbelklik demo/fetih-1453.html en het spel start in de browser.
+// Bouwt de game als één los HTML-bestand (alle JS/CSS ingebakken):
+// - index.html in de hoofdmap: de website voor GitHub Pages;
+// - demo/fetih-1453.html: dubbelklikken op een laptop en het spel start in de browser.
 import { build } from 'vite';
+import { appEntry } from '../vite.config.js';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const out = 'dist-demo';
 await build({
   configFile: false,
+  plugins: [appEntry],
   base: './',
   logLevel: 'warn',
   build: {
     outDir: out,
+    emptyOutDir: true,
     target: 'es2020',
     assetsInlineLimit: 1e9,
     cssCodeSplit: false,
     chunkSizeWarningLimit: 5000,
-    rollupOptions: { output: { codeSplitting: false } },
+    rollupOptions: { input: 'app.html', output: { codeSplitting: false } },
   },
 });
 
@@ -34,6 +38,7 @@ html = html
 
 mkdirSync('demo', { recursive: true });
 writeFileSync('demo/fetih-1453.html', html);
+writeFileSync('index.html', html);
 
 // Variant zonder <html>/<head>/<body> voor publicatie als Claude-artifact.
 const head = html.match(/<head>([\s\S]*)<\/head>/)[1].replace(/<meta[^>]*>\s*/g, '').replace(/<link rel="icon"[^>]*>\s*/, '');
