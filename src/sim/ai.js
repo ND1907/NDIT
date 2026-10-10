@@ -121,6 +121,16 @@ export class Commander {
     let defending = 0;
     let spotIdx = Math.floor(m.rng() * 10);
     const capturers = new Map();
+    // ---- bevel van de speler gaat voor ----
+    const po = t.playerOrder;
+    if (po && po.kind === 'follow' && !(m.player && m.player.alive && m.player.team === t.id)) t.playerOrder = null;
+    if (t.playerOrder) {
+      this._playerOrder(t.playerOrder, field, target, freePosts, inside);
+      for (const s of squads) if (s.order.kind === 'siege') s.order.team = target.id;
+      this._assignPushers(squads);
+      this._leader(field, target, allIn);
+      return;
+    }
     for (const s of field) {
       const role = s.type.role;
       const n = s.members.length;
@@ -190,15 +200,82 @@ export class Commander {
 
     // belegeringsgeschut altijd op het doel richten
     for (const s of squads) if (s.order.kind === 'siege') s.order.team = target.id;
+    this._assignPushers(squads);
 
-    // leider
-    const L = t.leader;
+    this._leader(field, target, allIn);
+  }
+
+  _leader(field, target, allIn) {
+    const L = this.team.leader;
     if (L && L.alive && !L.isPlayer) {
       const attackers = field.filter((s) => s.order.kind === 'attack');
       if (L.hp < L.maxHp * 0.35) this.leaderMode = 'retreat';
       else if (this.attackGo && attackers.length >= 2 && (target.fort.breached || allIn)) this.leaderMode = 'attack';
       else this.leaderMode = 'defend';
       this.leaderFollow = attackers[0]?.members[0] || null;
+    }
+  }
+
+  // Het bevel van de speler uitvoeren voor alle veldsquads van zijn rijk.
+  _playerOrder(po, field, target, freePosts, inside) {
+    const m = this.m;
+    const fort = this.team.fort;
+    let posted = 0;
+    let spot = 0;
+    let slot = 0;
+    this.attackGo = po.kind === 'attack';
+    if (this.attackGo && !this.waveStart) this.waveStart = field.reduce((a, s) => a + s.members.length, 0);
+    for (const s of field) {
+      const role = s.type.role;
+      const n = s.members.length;
+      const home = Math.hypot(s.members[0].x - fort.cx, s.members[0].z - fort.cz) < fort.extent + 25;
+      if (po.kind === 'defend') {
+        // vijand binnen: naar de donjon; schutters op de muren; de rest op de verdedigingsplekken
+        if (inside > 0 && home) {
+          if (s.order.kind !== 'keep') s.order = { kind: 'keep', since: m.time };
+        } else if ((RANGED_ROLES.has(role) || role === 'fire') && posted < freePosts) {
+          if (s.order.kind !== 'posts') s.order = { kind: 'posts', since: m.time };
+          posted += n;
+        } else if (s.order.kind !== 'defend') s.order = { kind: 'defend', spot: spot++ % fort.defendSpots.length };
+      } else if (po.kind === 'attack') {
+        const kind = role === 'cavalry' ? 'raid' : 'attack';
+        if (s.order.kind !== kind || s.order.team !== target.id) s.order = { kind, team: target.id };
+      } else if (po.kind === 'follow') {
+        if (s.order.kind !== 'follow') s.order = { kind: 'follow' };
+        for (const u of s.members) u.ai.fslot = slot++;
+      } else if (po.kind === 'hold') {
+        // iedereen blijft (in formatie) waar hij was toen het bevel kwam
+        if (s.order.kind !== 'hold' || s.order.at !== po.t) {
+          const a = s.members.find((x) => !x.post && !x.climb) || s.members[0];
+          s.order = { kind: 'hold', at: po.t, x: a.x, z: a.z, yaw: po.yaw };
+        }
+      }
+    }
+  }
+
+  // Voetvolk in de buurt duwt het rijdende belegeringstuig (sneller met meer duwers).
+  _assignPushers(squads) {
+    const m = this.m;
+    const engines = [];
+    for (const s of squads) if (s.order.kind === 'siege') for (const u of s.members) if (u.alive) engines.push(u);
+    for (const u of m.units) {
+      if (u.team !== this.team.id || !u.ai.pushing) continue;
+      const g = u.ai.pushing;
+      if (!g.alive || g.docked || Math.hypot(g.dvx || 0, g.dvz || 0) < 0.1 || Math.hypot(g.x - u.x, g.z - u.z) > 30) u.ai.pushing = null;
+    }
+    for (const g of engines) {
+      if (g.docked || Math.hypot(g.dvx || 0, g.dvz || 0) < 0.1) continue;
+      let have = 0;
+      const cands = [];
+      m.unitGrid.query(g.x, g.z, 26, (u) => {
+        if (u.team !== this.team.id || !u.alive || u.isPlayer) return false;
+        if (u.ai.pushing === g) have++;
+        else if (!u.ai.pushing && !u.siege && !u.mounted && !u.post && !u.wall && !u.isLeader && !u.ai.target && !u.ai.resupply
+          && ['spear', 'heavy', 'sapper'].includes(u.role) && ['rally', 'attack'].includes(u.squad?.order.kind)) cands.push(u);
+        return false;
+      });
+      cands.sort((a, b) => Math.hypot(a.x - g.x, a.z - g.z) - Math.hypot(b.x - g.x, b.z - g.z));
+      for (const u of cands.slice(0, Math.max(0, 3 - have))) u.ai.pushing = g;
     }
   }
 
@@ -297,8 +374,8 @@ export function unitThink(m, u) {
 
   // vangnet: wie te lang niets nuttigs doet (niet vechten, niet vooruitkomen, geen geldige wachtpositie)
   // krijgt een nieuwe taak van de commandant
-  const holding = !ai.wantMove && (['defend', 'posts', 'keep', 'guard', 'rally'].includes(order.kind) || (order.kind === 'attack' && ranged));
-  const useful = ai.target || ai.struct || ai.dockSt || u.attackT < 2 || u.post || u.wall || u.climb || holding || Math.hypot(u.x - (ai.ux ?? u.x), u.z - (ai.uz ?? u.z)) > 3;
+  const holding = !ai.wantMove && (['defend', 'posts', 'keep', 'guard', 'rally', 'hold', 'follow'].includes(order.kind) || (order.kind === 'attack' && ranged));
+  const useful = ai.target || ai.struct || ai.dockSt || ai.resupply || ai.pushing || u.attackT < 2 || u.post || u.wall || u.climb || holding || Math.hypot(u.x - (ai.ux ?? u.x), u.z - (ai.uz ?? u.z)) > 3;
   if (useful || ai.ut == null) {
     ai.ux = u.x;
     ai.uz = u.z;
@@ -316,7 +393,7 @@ export function unitThink(m, u) {
   else if (u.role === 'cavalry') senseR = order.kind === 'raid' ? 55 : 35;
   else if (u.role === 'sapper') senseR = 6;
   else if (u.role === 'fire') senseR = 22;
-  else senseR = order.kind === 'defend' || order.kind === 'keep' ? 32 : 22;
+  else senseR = order.kind === 'defend' || order.kind === 'keep' ? 32 : order.kind === 'follow' || order.kind === 'hold' ? 15 : 22;
   if (u.role === 'leader') senseR = 18;
 
   // houd het huidige doel vast zolang het bereikbaar is
@@ -339,15 +416,30 @@ export function unitThink(m, u) {
     const ri = weaponIndex(u, 'ranged');
     const mi = weaponIndex(u, 'melee');
     const d = t ? Math.hypot(t.x - u.x, t.z - u.z) : 99;
-    if ((d < 4.5 || u.ammo[ri] <= 0) && mi >= 0) u.wi = mi;
+    if ((d < 4.5 || u.ammo[ri] < 1) && mi >= 0) u.wi = mi;
     else u.wi = ri;
   } else if (u.post) {
     const ri = weaponIndex(u, 'ranged');
     if (ri >= 0) u.wi = ri;
   } else if (u.role === 'spear' && u.weapons[1]?.kind === 'thrown') {
     const d = t ? Math.hypot(t.x - u.x, t.z - u.z) : 99;
-    u.wi = d > 9 && d < 28 && u.ammo[1] > 0 ? 1 : 0;
+    u.wi = d > 9 && d < 28 && u.ammo[1] >= 1 ? 1 : 0;
   } else if (u.weapons[u.wi].kind !== 'melee' && u.weapons[u.wi].kind !== 'spray') u.wi = Math.max(0, weaponIndex(u, 'melee'));
+
+  // munitie op of bijna op: naar de dichtstbijzijnde munitiewagen
+  if ((ranged || u.role === 'fire') && !u.post && !u.wall && !u.climb) {
+    const ai2 = ranged ? weaponIndex(u, 'ranged') : 0;
+    const mx = m.ammoMax(u, ai2);
+    if (ai.resupply) {
+      if (u.ammo[ai2] >= mx * 0.9 || m.time - ai.resupplyT > 90) ai.resupply = null;
+    } else if (mx !== Infinity && (u.ammo[ai2] < 1 || (u.ammo[ai2] < mx * 0.2 && !t))) {
+      const s = m.nearestSupply(u, 150);
+      if (s) {
+        ai.resupply = s;
+        ai.resupplyT = m.time;
+      }
+    }
+  } else ai.resupply = null;
 
   // muurposten
   if (order.kind === 'posts' && !u.post && !u.climb && !t) {
@@ -506,6 +598,14 @@ export function unitSteer(m, u, dt) {
     }
   }
 
+  // munitie halen (een vijand vlakbij gaat voor)
+  if (ai.resupply && (!t || Math.hypot(t.x - u.x, t.z - u.z) > 6)) {
+    const s = ai.resupply;
+    const a = u.id * 2.4;
+    seek(m, u, s.x + Math.sin(a) * 2.5, s.z + Math.cos(a) * 2.5, sp, dt, 1.2, s.field ? { kind: 'rally' } : { kind: 'defend' }, u.team);
+    return;
+  }
+
   // muur/poort aanvallen
   if (!t && ai.struct) {
     const st = ai.struct;
@@ -569,7 +669,7 @@ export function unitSteer(m, u, dt) {
       if (d < w.range && ai.reactT <= 0 && Math.abs(angleDiff(u.yaw, Math.atan2(dx, dz))) < 0.3) {
         if (!m.startSpray(u)) {
           // geen vuur meer: met het zwaard verder
-          if (u.ammo[0] <= 0) u.wi = 1;
+          if (u.ammo[0] < 1) u.wi = 1;
         }
       }
       return;
@@ -605,7 +705,8 @@ export function unitSteer(m, u, dt) {
     return;
   }
 
-  // geen vijand: order uitvoeren
+  // geen vijand: belegeringstuig duwen of de order uitvoeren
+  if (ai.pushing) return pushMove(m, u, dt, sp);
   orderMove(m, u, dt, sp, order);
 }
 
@@ -674,6 +775,8 @@ function fieldForOrder(m, u, order) {
     case 'capture': return m.field('cp:' + order.cp, u.alliance);
     case 'rally': return m.field('rally:' + u.team, u.alliance);
     case 'keep': return m.field('keep:' + u.team, u.alliance);
+    case 'hold': return m.pointField(order.x, order.z, u.alliance);
+    case 'follow': return m.player ? m.pointField(m.player.x, m.player.z, u.alliance) : null;
     default: return m.field('home:' + u.team, u.alliance);
   }
 }
@@ -692,6 +795,8 @@ function goalOf(m, u, order) {
     }
     case 'rally': return [t.fort.rally.x, t.fort.rally.z];
     case 'keep': return [t.fort.keep.x, t.fort.keep.z];
+    case 'hold': return [order.x, order.z];
+    case 'follow': return m.player ? [m.player.x, m.player.z] : [t.fort.rally.x, t.fort.rally.z];
     default: return [t.fort.inside.x, t.fort.inside.z];
   }
 }
@@ -717,7 +822,7 @@ function orderMove(m, u, dt, sp, order) {
   const sq = u.squad;
   const ai = u.ai;
   // wachtorders: dicht bij het doel maar door gedrang geen plek → gewoon blijven staan (niet eindeloos duwen)
-  if ((order.kind === 'rally' || order.kind === 'keep' || order.kind === 'defend' || order.kind === 'guard') && (ai.stuckT > 1 || ai.crowdHold > m.time)) {
+  if ((order.kind === 'rally' || order.kind === 'keep' || order.kind === 'defend' || order.kind === 'guard' || order.kind === 'hold') && (ai.stuckT > 1 || ai.crowdHold > m.time)) {
     const g = goalOf(m, u, order);
     if (Math.hypot(g[0] - u.x, g[1] - u.z) < 16) {
       if (ai.stuckT > 1) ai.crowdHold = m.time + 6;
@@ -739,6 +844,7 @@ function orderMove(m, u, dt, sp, order) {
       }
     }
   }
+  if (order.kind === 'follow' && m.player) return followMove(m, u, dt, sp);
   if (order.kind === 'posts') {
     if (ai.post) {
       seek(m, u, ai.post.footX, ai.post.footZ, sp, dt, 0.4, { kind: 'defend' }, u.team);
@@ -762,6 +868,18 @@ function orderMove(m, u, dt, sp, order) {
     const tz = spot.z - s2 * ox + c * oz;
     if (Math.hypot(tx - u.x, tz - u.z) > 0.8) seek(m, u, tx, tz, sp * 0.8, dt, 0.6, { kind: 'defend' }, u.team);
     else u.yaw += clamp(angleDiff(u.yaw, f.rot), -3 * dt, 3 * dt);
+    return;
+  }
+  if (order.kind === 'hold') {
+    // positie houden: elke man op zijn plek in de formatie rond het bevelpunt
+    const k = sq ? Math.max(0, sq.members.indexOf(u)) : 0;
+    const [ox, oz] = slotOffset(u, k);
+    const c = Math.cos(order.yaw);
+    const s2 = Math.sin(order.yaw);
+    const tx = order.x + c * ox + s2 * oz;
+    const tz = order.z - s2 * ox + c * oz;
+    if (Math.hypot(tx - u.x, tz - u.z) > 0.8) seek(m, u, tx, tz, sp * 0.8, dt, 0.6, order, u.team);
+    else u.yaw += clamp(angleDiff(u.yaw, order.yaw), -3 * dt, 3 * dt);
     return;
   }
   // de eerste levende eenheid (niet op de muur) is het anker van de squad
@@ -836,6 +954,71 @@ function orderMove(m, u, dt, sp, order) {
   } else {
     u.yaw += clamp(angleDiff(u.yaw, anchor.yaw), -3 * dt, 3 * dt);
   }
+}
+
+// 'Volg mij': het hele leger loopt in een blok achter de speler aan.
+function followMove(m, u, dt, sp) {
+  const p = m.player;
+  const k = u.ai.fslot ?? 0;
+  const width = 8;
+  const row = Math.floor(k / width);
+  const col = (k % width) - (width - 1) / 2;
+  const sx = u.mounted ? 2.6 : 1.7;
+  const ox = col * sx;
+  const oz = -(p.mounted ? 5 : 3.5) - row * (u.mounted ? 2.8 : 1.9);
+  const c = Math.cos(p.yaw);
+  const s = Math.sin(p.yaw);
+  const tx = p.x + c * ox + s * oz;
+  const tz = p.z - s * ox + c * oz;
+  const d = Math.hypot(tx - u.x, tz - u.z);
+  const ps = Math.hypot(p.vx, p.vz);
+  if (d < 0.8) {
+    if (ps < 0.5) u.yaw += clamp(angleDiff(u.yaw, p.yaw), -3 * dt, 3 * dt);
+    else move(u, (tx - u.x) / Math.max(d, 0.3), (tz - u.z) / Math.max(d, 0.3), Math.min(sp * 1.3, ps));
+    return;
+  }
+  // inhalen: wat sneller dan de speler als we achterlopen
+  const speed = Math.min(sp * (d > 6 ? 1.3 : 1), Math.max(ps + d * 0.6, 1.2));
+  if (d < 25 && (d < 4 || m.nav.clearLine(u.x, u.z, tx, tz, u.alliance))) {
+    move(u, (tx - u.x) / d, (tz - u.z) / d, speed);
+    faceMove(u, dt);
+    return;
+  }
+  const f = m.pointField(p.x, p.z, u.alliance);
+  if (f && m.nav.dirAt(f, u.x, u.z, tmpDir) && (tmpDir.x || tmpDir.z)) {
+    move(u, tmpDir.x, tmpDir.z, speed);
+    faceMove(u, dt);
+  } else move(u, (tx - u.x) / d, (tz - u.z) / d, speed);
+}
+
+// achter het belegeringstuig gaan staan en meeduwen in zijn rijrichting
+function pushMove(m, u, dt, sp) {
+  const g = u.ai.pushing;
+  let fx = g.dvx || 0;
+  let fz = g.dvz || 0;
+  const fl = Math.hypot(fx, fz);
+  if (fl < 0.05) {
+    fx = Math.sin(g.yaw);
+    fz = Math.cos(g.yaw);
+  } else {
+    fx /= fl;
+    fz /= fl;
+  }
+  const slot = (u.id % 3) - 1;
+  const bx = g.x - fx * (g.radius + 0.35) + fz * slot * 0.9;
+  const bz = g.z - fz * (g.radius + 0.35) - fx * slot * 0.9;
+  const d = Math.hypot(bx - u.x, bz - u.z);
+  if (d > 1.0) {
+    seek(m, u, bx, bz, sp, dt, 0.3, null);
+    return;
+  }
+  // tegen het tuig aan leunen
+  const tx = g.x + fz * slot * 0.9 - u.x;
+  const tz = g.z - fx * slot * 0.9 - u.z;
+  const tl = Math.hypot(tx, tz) || 1;
+  move(u, tx / tl, tz / tl, Math.max(1.2, Math.hypot(g.vx, g.vz) + 0.8));
+  u.yaw += clamp(angleDiff(u.yaw, Math.atan2(fx, fz)), -6 * dt, 6 * dt);
+  u.pushAnim = m.time;
 }
 
 function leaderMove(m, u, dt, sp) {
@@ -917,7 +1100,7 @@ function siegeSteer(m, u, dt) {
   const sp = m.speedOf(u);
   if (!st || st.destroyed) {
     if (order?.team) {
-      const f = m.field('keep:' + order.team, u.alliance);
+      const f = m.field('keep:' + order.team, u.alliance, true);
       if (u.role !== 'tower' && m.nav.distAt(f, u.x, u.z) > 30 && m.nav.dirAt(f, u.x, u.z, tmpDir)) move(u, tmpDir.x, tmpDir.z, sp);
     }
     return;
@@ -927,7 +1110,7 @@ function siegeSteer(m, u, dt) {
     const [lx, lz] = toLocal(st.ob, u.x, u.z);
     const gap = Math.hypot(Math.max(0, Math.abs(lx) - st.ob.hx), Math.max(0, Math.abs(lz) - st.ob.hz));
     if (gap > 3.5) {
-      const f = m.field('gate:' + st.team, u.alliance);
+      const f = m.field('gate:' + st.team, u.alliance, true);
       if (d < 16) move(u, (st.x - u.x) / d, (st.z - u.z) / d, sp);
       else if (m.nav.dirAt(f, u.x, u.z, tmpDir)) move(u, tmpDir.x, tmpDir.z, sp);
     } else {
@@ -955,7 +1138,7 @@ function siegeSteer(m, u, dt) {
         m.dockTower(u, st);
       }
     } else {
-      const f = m.field('keep:' + order.team, u.alliance);
+      const f = m.field('keep:' + order.team, u.alliance, true);
       if (m.nav.dirAt(f, u.x, u.z, tmpDir)) move(u, tmpDir.x, tmpDir.z, sp);
     }
     return;
@@ -964,7 +1147,7 @@ function siegeSteer(m, u, dt) {
   const w = u.weapons[0];
   const want = w.range * 0.75;
   if (d > want) {
-    const f = m.field('keep:' + st.team, u.alliance);
+    const f = m.field('keep:' + st.team, u.alliance, true);
     if (m.nav.dirAt(f, u.x, u.z, tmpDir)) move(u, tmpDir.x, tmpDir.z, sp);
     ai.deployT = 0;
   } else {

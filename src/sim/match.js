@@ -19,8 +19,16 @@ function bodyOf(def) {
 }
 
 
+// paslengte per gang: stap ±1,6 m, draf ±2,8 m, galop tot ±5,5 m (frequentie in Hz)
+function horseStrideHz(v) {
+  if (v < 0.25) return 0;
+  if (v < 2.6) return 0.5 + 0.22 * v;
+  if (v < 6.8) return 1.07 + 0.035 * v;
+  return 1.45 + 0.04 * v;
+}
+
 // schaal voor schade aan eenheden (niet aan bouwwerken)
-const UNIT_DMG = 0.5;
+const UNIT_DMG = 0.42;
 
 export class Match {
   constructor(settings) {
@@ -37,7 +45,7 @@ export class Match {
     this.teams = s.teams.map((id, i) => ({
       id, index: i, faction: FACTIONS[id],
       alliance: s.mode === 'ffa' ? id : FACTIONS[id].side,
-      alive: true, morale: 70,
+      alive: true, morale: (FACTIONS[id].moraleBase || 60) + 10,
       leader: null, leaderDeaths: 0, cryCd: 20,
       stats: { kills: 0, losses: 0, structDmg: 0, leaderKills: 0 },
       eliminatedAt: null, fort: null, units: 0,
@@ -117,7 +125,7 @@ export class Match {
       this.spawnLeader(t);
       this.recruit(t, t.cap - t.soldiers, true);
       // belegeringstuig staat vanaf het begin klaar (geen nieuwe bouw tijdens het potje)
-      const kinds = t.faction.siege.slice(0, 3);
+      const kinds = t.faction.siege.slice(0, 4);
       kinds.forEach((type, i) => {
         const y = t.fort.siegeYard;
         const u = this.createUnit(type, t.id, y.x + (i - 1) * 7 * Math.cos(t.fort.rot), y.z - (i - 1) * 7 * Math.sin(t.fort.rot));
@@ -262,7 +270,7 @@ export class Match {
     let bd = 70;
     if (u.ai.reassigns < 3) {
       for (const sq of this.squads) {
-        if (sq.team !== u.team || sq.members.length < 2 || !['attack', 'defend', 'rally'].includes(sq.order.kind)) continue;
+        if (sq.team !== u.team || sq.members.length < 2 || !['attack', 'defend', 'rally', 'follow', 'hold'].includes(sq.order.kind)) continue;
         const a = sq.members[0];
         const d = Math.hypot(a.x - u.x, a.z - u.z);
         if (d < bd && d > 4) {
@@ -280,6 +288,19 @@ export class Match {
     }
   }
 
+  // Bevel van de speler aan zijn eigen leger: 'follow' (volg mij), 'hold' (positie houden),
+  // 'defend' (verdedig het fort), 'attack' (val aan) of 'free' (de commandant beslist).
+  issueOrder(teamId, kind) {
+    const t = this.teamById[teamId];
+    if (!t || !t.alive) return;
+    const p = this.player;
+    t.playerOrder = kind === 'free' ? null : { kind, t: this.time, x: p?.x ?? t.fort.rally.x, z: p?.z ?? t.fort.rally.z, yaw: p?.yaw ?? t.fort.rot };
+    const c = this.commanders[t.index];
+    if (kind === 'free') c.attackGo = false;
+    c.t = 0; // meteen uitvoeren
+    this.events.push({ t: 'order', team: teamId, kind });
+  }
+
   makeSquad(t, members, order) {
     const sq = { id: this.squads.length + 1, team: t.id, members, order, type: members[0]?.def, formT: 0, anchor: null };
     for (const m of members) m.squad = sq;
@@ -290,12 +311,29 @@ export class Match {
   // ------------------------------------------------------------------ velden
   // Geeft het (eventueel nog verouderde) veld terug; ontbrekende of verouderde velden
   // worden op de achtergrond (verdeeld over frames) berekend. Kan null geven.
-  field(key, alliance) {
+  // veld naar een vrij punt (voor 'volg mij' en 'positie houden'), op 8 m afgerond
+  pointField(x, z, alliance) {
+    const key = `pt:${Math.round(x / 8) * 8},${Math.round(z / 8) * 8}`;
     const k = key + '|' + alliance;
+    const keys = this._ptKeys || (this._ptKeys = []);
+    if (!keys.includes(k)) {
+      keys.push(k);
+      // oude puntvelden opruimen
+      while (keys.length > 6) {
+        const old = keys.shift();
+        this.nav.fields.delete(old);
+        this.fieldJobs.delete(old);
+      }
+    }
+    return this.field(key, alliance);
+  }
+
+  field(key, alliance, wide = false) {
+    const k = key + '|' + alliance + (wide ? '|w' : '');
     const f = this.nav.fields.get(k);
     if (f && f.version === this.nav.version) return f;
     if (!this.fieldJobs.has(k) || this.fieldJobs.get(k).version !== this.nav.version) {
-      this.fieldJobs.set(k, this.nav.startJob(k, this._goals(key), alliance, this.allianceOf));
+      this.fieldJobs.set(k, this.nav.startJob(k, this._goals(key), alliance, this.allianceOf, wide));
     }
     return f || null;
   }
@@ -332,6 +370,9 @@ export class Match {
     } else if (kind === 'rally') {
       const f = this.teamById[arg].fort;
       goals = [[f.rally.x, f.rally.z, 7]];
+    } else if (kind === 'pt') {
+      const [x, z] = arg.split(',').map(Number);
+      goals = [[x, z, 4]];
     } else if (kind === 'gate') {
       const f = this.teamById[arg].fort;
       const g = f.gates.find((gg) => !gg.destroyed) || f.gate;
@@ -381,6 +422,7 @@ export class Match {
     this._updateHorses(dt);
     this._updateProjectiles(dt);
     if (this.tick % 6 === 0) this._updateCapture(dt * 6);
+    if (this.tick % 15 === 0) this._resupply(dt * 15);
     this._morale(dt);
     if (this.tick % 60 === 0) this._cleanup();
     this._checkVictory();
@@ -446,6 +488,10 @@ export class Match {
       if (u.weapons[inp.selectWeapon]) u.wi = inp.selectWeapon;
       inp.selectWeapon = null;
     }
+    if (inp.order) {
+      this.issueOrder(u.team, inp.order);
+      inp.order = null;
+    }
     if (inp.cry) {
       inp.cry = false;
       if (u.isLeader) this.battleCry(u);
@@ -463,6 +509,7 @@ export class Match {
         const p = this.nearestFreePost(u, 3.5);
         if (h && (!p || Math.hypot(h.x - u.x, h.z - u.z) < Math.hypot(p.footX - u.x, p.footZ - u.z))) this.mount(u, h);
         else if (p) this.takePost(u, p);
+        else this.lootAmmo(u);
       }
     }
     if (inp.attack) {
@@ -470,6 +517,107 @@ export class Match {
       if (!w) { /* geen wapen */ } else if (w.kind === 'melee') this.startMelee(u, null);
       else if (w.kind === 'spray') this.startSpray(u);
       else if (inp.aim) this.shoot(u, inp.aim.x, inp.aim.y, inp.aim.z, 1);
+    }
+  }
+
+  // ------------------------------------------------------------------ munitie
+  // Pijlen, bouten, kogels en Grieks vuur raken op. Aanvullen kan bij de munitiewagens van de eigen
+  // alliantie (snel), binnen het eigen fort en op de muur (langzaam, de voorraad ligt klaar), en door
+  // pijlen en kogels van gesneuvelden op te rapen (E; bots doen dat zelf).
+  ammoMax(u, i) {
+    return u.def.weapons[i] ? WEAPONS[u.def.weapons[i]].ammo ?? Infinity : Infinity;
+  }
+
+  needsAmmo(u, frac = 1) {
+    for (let i = 0; i < u.ammo.length; i++) {
+      const mx = this.ammoMax(u, i);
+      if (mx !== Infinity && u.ammo[i] < mx * frac) return true;
+    }
+    return false;
+  }
+
+  nearestSupply(u, range = Infinity) {
+    let best = null;
+    let bd = range;
+    for (const t of this.teams) {
+      if (t.alliance !== u.alliance) continue;
+      for (const s of t.fort.supply || []) {
+        const d = Math.hypot(s.x - u.x, s.z - u.z);
+        if (d < bd) {
+          bd = d;
+          best = s;
+        }
+      }
+    }
+    return best;
+  }
+
+  // munitie van een gesneuvelde (vriend of vijand) met hetzelfde soort projectiel
+  lootAmmo(u, range = 2.6) {
+    let got = 0;
+    for (const d of this.units) {
+      if (d.alive || d === u || Math.hypot(d.x - u.x, d.z - u.z) > range) continue;
+      for (let i = 0; i < u.ammo.length; i++) {
+        const w = u.weapons[i];
+        const room = this.ammoMax(u, i) - u.ammo[i];
+        if (!w.proj || room < 1) continue;
+        for (let j = 0; j < d.ammo.length; j++) {
+          if (d.weapons[j].proj !== w.proj || !(d.ammo[j] >= 1)) continue;
+          const k = Math.min(Math.floor(room), Math.floor(d.ammo[j]));
+          if (k < 1) continue;
+          u.ammo[i] += k;
+          d.ammo[j] -= k;
+          got += k;
+        }
+      }
+    }
+    if (got) this.events.push({ t: 'ammo', u, n: got, how: 'loot' });
+    return got;
+  }
+
+  // levert de pickup-bron voor de HUD: 'wagon', 'fort' of 'body'
+  ammoSource(u) {
+    if (!this.needsAmmo(u)) return null;
+    if (this.nearestSupply(u, 7)) return 'wagon';
+    if (u.post || u.wall || this._inOwnFort(u)) return 'fort';
+    for (const d of this.units) {
+      if (d.alive || Math.hypot(d.x - u.x, d.z - u.z) > 2.6) continue;
+      for (let i = 0; i < u.weapons.length; i++) {
+        if (u.weapons[i].proj && d.weapons.some((w, j) => w.proj === u.weapons[i].proj && d.ammo[j] >= 1)) return 'body';
+      }
+    }
+    return null;
+  }
+
+  _inOwnFort(u) {
+    const f = this.teamById[u.team].fort;
+    const c = Math.cos(f.rot);
+    const s = Math.sin(f.rot);
+    const dx = u.x - f.cx;
+    const dz = u.z - f.cz;
+    return Math.abs(c * dx - s * dz) < f.W && Math.abs(s * dx + c * dz) < f.W;
+  }
+
+  _resupply(dt) {
+    for (const u of this.units) {
+      if (!u.alive || u.siege || !this.needsAmmo(u)) continue;
+      let rate = 0; // deel van het maximum per seconde
+      if (this.nearestSupply(u, 7)) rate = 0.25;
+      else if (u.post || u.wall || this._inOwnFort(u)) rate = 1 / 60;
+      let filled = false;
+      for (let i = 0; i < u.ammo.length; i++) {
+        const mx = this.ammoMax(u, i);
+        if (mx === Infinity || u.ammo[i] >= mx) continue;
+        // Grieks vuur alleen bij de wagen
+        const r = u.weapons[i].kind === 'spray' && rate < 0.25 ? 0 : rate;
+        if (!r) continue;
+        const before = Math.floor(u.ammo[i]);
+        u.ammo[i] = Math.min(mx, u.ammo[i] + mx * r * dt);
+        if (Math.floor(u.ammo[i]) > before) filled = true;
+      }
+      if (filled && rate >= 0.25 && u.isPlayer) this.events.push({ t: 'ammo', u, how: 'wagon' });
+      // bots rapen zelf pijlen en kogels op als ze niet vechten
+      if (!u.isPlayer && !u.ai.target && this.needsAmmo(u, 0.6) && this.tick % 30 === 0) this.lootAmmo(u, 2.2);
     }
   }
 
@@ -541,6 +689,22 @@ export class Match {
       u.vz = tz;
       u.dmag = undefined;
     } else {
+      if (u.siege) {
+        // belegeringstuig wordt geduwd: een vaste bemanning plus elke soldaat die meeduwt
+        const n = Math.min(4, u.pushN || 0);
+        const crew = 0.65 + 0.15 * n;
+        tx *= crew;
+        tz *= crew;
+        if (u.pushP && !u.docked) {
+          // de speler duwt: zijn richting wint
+          const ps = u.def.speed * (0.6 + 0.15 * Math.min(3, n - 1));
+          tx = u.pushPx * ps;
+          tz = u.pushPz * ps;
+        }
+        u.pushers = u.pushN || 0;
+        u.pushN = 0;
+        u.pushP = false;
+      }
       const acc = u.siege ? 2 : u.airT > 0 ? 1.2 : 12;
       u.vx += (tx - u.vx) * Math.min(1, acc * dt);
       u.vz += (tz - u.vz) * Math.min(1, acc * dt);
@@ -571,6 +735,26 @@ export class Match {
       if (d2 >= rr * rr || d2 < 1e-6) return false;
       if (Math.abs(self.y - o.y) > 2) return false;
       const d = Math.sqrt(d2);
+      // tegen eigen belegeringstuig aan lopen = duwen
+      if (o.siege && !self.siege && !self.mounted && o.alliance === self.alliance && !o.docked) {
+        const mv = Math.hypot(self.dvx || 0, self.dvz || 0);
+        if (mv > 0.5 && -(dx * self.dvx + dz * self.dvz) / (d * mv) > 0.4) {
+          o.pushN = (o.pushN || 0) + 1;
+          self.pushT = 0.35;
+          if (self.isPlayer) {
+            o.pushP = true;
+            o.pushPx = self.dvx / mv;
+            o.pushPz = self.dvz / mv;
+            // achter het tuig blijven (niet langs de ronde rand wegglijden)
+            const lx = -self.dvz / mv;
+            const lz = self.dvx / mv;
+            const lat = dx * lx + dz * lz;
+            const c = clamp(-lat, -2 * dt, 2 * dt);
+            self.x += lx * c;
+            self.z += lz * c;
+          }
+        }
+      }
       // zware eenheden wijken minder
       const wSelf = self.siege ? 0.1 : self.mounted ? 0.35 : 0.5;
       const wOther = o.siege ? 2 : 1;
@@ -767,7 +951,7 @@ export class Match {
 
   startSpray(u) {
     const w = u.weapons[u.wi];
-    if (u.cd > 0 || w.kind !== 'spray' || u.ammo[u.wi] <= 0) return false;
+    if (u.cd > 0 || w.kind !== 'spray' || u.ammo[u.wi] < 1) return false;
     u.cd = w.cooldown;
     u.sprayT = w.duration;
     u.ammo[u.wi]--;
@@ -806,7 +990,7 @@ export class Match {
   shoot(u, tx, ty, tz, accuracyMult = 1) {
     const w = u.weapons[u.wi];
     if (u.cd > 0 || (w.kind !== 'ranged' && w.kind !== 'thrown' && w.kind !== 'siege')) return false;
-    if (u.ammo[u.wi] <= 0) return false;
+    if (u.ammo[u.wi] < 1) return false;
     const ox = u.x + Math.sin(u.yaw) * (u.siege ? 2.5 : 0.4);
     const oz = u.z + Math.cos(u.yaw) * (u.siege ? 2.5 : 0.4);
     const oy = u.y + (u.siege ? (w.lob ? 5 : 1.4) : u.mounted ? 2.4 : 1.45);
@@ -946,6 +1130,7 @@ export class Match {
       const at = this.teamById[attacker.team];
       mult *= 1 + (attacker.aura?.dmg || 0) + (attacker.buff.until > this.time ? attacker.buff.dmg : 0);
       mult *= 0.85 + (0.3 * at.morale) / 100;
+      mult *= at.faction.dmg || 1; // geoefend leger slaat harder
     }
     mult *= 1 - Math.min(0.6, (e.aura?.def || 0) + (e.buff.until > this.time ? e.buff.def : 0));
     // verschanst: verdedigers in hun eigen fort of op de muur zijn beter beschermd
@@ -1005,7 +1190,7 @@ export class Match {
     t.units--;
     if (!u.siege) t.soldiers--;
     t.stats.losses++;
-    t.morale -= u.isLeader ? 0 : 0.12;
+    t.morale -= u.isLeader ? 0 : 0.12 * (t.faction.moraleLoss || 1);
     if (attacker && attacker.team !== u.team) {
       attacker.kills++;
       const at = this.teamById[attacker.team];
@@ -1021,7 +1206,7 @@ export class Match {
     }
     if (u.isLeader) {
       t.leaderDeaths++;
-      t.morale -= 30;
+      t.morale -= 30 * (t.faction.moraleLoss || 1);
       // schok: tijdelijk minder schade voor het hele team
       for (const o of this.units) if (o.alive && o.team === u.team) o.buff = { dmg: -0.15, def: -0.1, speed: 0, until: this.time + 30 };
       this.events.push({ t: 'leaderDown', team: u.team, u, by: attacker });
@@ -1054,7 +1239,7 @@ export class Match {
     if (!fort.breached) fort.breachedAt = this.time;
     fort.breached = true;
     const owner = this.teamById[st.team];
-    owner.morale -= st.gate ? 10 : 8;
+    owner.morale -= (st.gate ? 10 : 8) * (owner.faction.moraleLoss || 1);
     if (attacker) this.teamById[attacker.team].morale += 8;
     // verdedigers op dit stuk muur vallen naar beneden
     for (const p of fort.posts) {
@@ -1321,7 +1506,7 @@ export class Match {
 
   _morale(dt) {
     for (const t of this.teams) {
-      t.morale += (60 - t.morale) * 0.004 * dt;
+      t.morale += ((t.faction.moraleBase || 60) - t.morale) * 0.004 * dt;
       t.morale = clamp(t.morale, 5, 100);
     }
   }
@@ -1490,9 +1675,10 @@ export class Match {
   // ------------------------------------------------------------------ animatie
   _animTick(u, dt) {
     u.animT += dt;
+    if (u.pushT > 0) u.pushT -= dt;
     u.attackT += dt;
     u.hitT += dt;
-    if (u.mounted) u.gait += dt * (u.speed > 0.3 ? 2.2 + u.speed * 0.55 : 0);
+    if (u.mounted) u.gait += dt * Math.PI * 2 * horseStrideHz(u.speed);
     else u.gait += dt * u.speed * 1.35;
   }
 

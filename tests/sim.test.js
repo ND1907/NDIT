@@ -187,7 +187,7 @@ describe('bouwwerken en navigatie', () => {
 describe('leiders, inname en overwinning', () => {
   it('leider sneuvelt: moreel daalt en hij komt niet terug', () => {
     const m = mk();
-    const t = m.teamById.ottoman;
+    const t = m.teamById.byzantine;
     const L = t.leader;
     const morale = t.morale;
     L.spawnT = -100;
@@ -455,4 +455,117 @@ describe('paard en springen', () => {
     expect(maxMounted).toBeGreaterThan(maxFoot * 1.5);
     expect(p.y).toBe(0);
   });
+});
+
+describe('Ottomaanse discipline', () => {
+  it('de Ottomanen hebben het sterkste leger: meer levenspunten, hoger moreel, dubbele bombarde', () => {
+    const m = mk();
+    const o = m.teamById.ottoman;
+    const b = m.teamById.byzantine;
+    expect(o.morale).toBeGreaterThan(b.morale);
+    for (const f of Object.values(FACTIONS)) if (f.id !== 'ottoman') expect(FACTIONS.ottoman.power).toBeGreaterThan(f.power);
+    expect(m.units.filter((u) => u.team === 'ottoman' && u.typeId === 'ott_bombard').length).toBe(2);
+    // leider valt: Ottomaans moreel zakt minder diep
+    const om = o.morale;
+    const bm = b.morale;
+    o.leader.spawnT = b.leader.spawnT = -100;
+    m.damageUnit(o.leader, 1e6, 'slash', null, {});
+    m.damageUnit(b.leader, 1e6, 'slash', null, {});
+    expect(om - o.morale).toBeLessThan(bm - b.morale);
+  });
+});
+
+describe('munitie, duwen en bevelen', () => {
+  const mkP = (unit, team = 'ottoman') => new Match({ teams: [team, team === 'ottoman' ? 'byzantine' : 'ottoman'], mode: 'historical', troops: 'small', length: 'normal', seed: 5, withPlayer: true, playerTeam: team, playerUnit: unit });
+  const step = (m, inp, n) => {
+    for (let i = 0; i < n; i++) {
+      m.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, ...inp };
+      m.update(1 / 30);
+      m.events.length = 0;
+    }
+  };
+  it('elk fort heeft munitiewagens; bij de wagen vult munitie snel aan', () => {
+    const m = mkP('ott_janissary');
+    const p = m.player;
+    for (const t of m.teams) expect(t.fort.supply.length).toBeGreaterThanOrEqual(2);
+    const ri = p.weapons.findIndex((w) => w.kind === 'ranged');
+    expect(ri).toBeGreaterThanOrEqual(0);
+    p.ammo[ri] = 0;
+    // ver van alles: niets
+    p.x = 0; p.z = 0;
+    step(m, {}, 60);
+    expect(p.ammo[ri]).toBe(0);
+    const s = m.teamById.ottoman.fort.supply[1];
+    p.x = s.x + 2; p.z = s.z;
+    step(m, {}, 30 * 6);
+    expect(p.ammo[ri]).toBe(m.ammoMax(p, ri));
+  });
+  it('zonder munitie kun je niet schieten; E bij een gesneuvelde schutter = oprapen', () => {
+    const m = mkP('ott_janissary');
+    const p = m.player;
+    const ri = p.weapons.findIndex((w) => w.kind === 'ranged');
+    p.wi = ri;
+    p.ammo[ri] = 0;
+    p.x = 0; p.z = 0;
+    const before = m.projectiles.length;
+    expect(m.shoot(p, 10, 1, 10, 1)).toBe(false);
+    expect(m.projectiles.length).toBe(before);
+    const dead = place(m, 'byz_toxotes', 'byzantine', 1, 0);
+    m.kill(dead, null);
+    expect(dead.alive).toBe(false);
+    step(m, { climb: true }, 1);
+    expect(p.ammo[ri]).toBeGreaterThan(5);
+  });
+  it('bots zonder munitie gaan naar een munitiewagen', () => {
+    const m = mkP('ott_janissary');
+    const bot = m.units.find((u) => u.alive && !u.isPlayer && u.team === 'ottoman' && u.role === 'archer' && !u.post);
+    bot.ammo = bot.ammo.map((a, i) => (bot.weapons[i].kind === 'ranged' ? 0 : a));
+    step(m, {}, 30);
+    expect(bot.ai.resupply).toBeTruthy();
+  });
+  it('de speler duwt eigen belegeringstuig vooruit; meer duwers = sneller', () => {
+    const m = mkP('ott_azap');
+    const p = m.player;
+    const g = m.units.find((u) => u.team === 'ottoman' && u.role === 'ram');
+    // tuig stilzetten (geen order) en ver van alles neerzetten
+    // los van zijn squad: zonder duwen staat het stil
+    g.squad.members.length = 0;
+    g.squad = null;
+    g.x = 0; g.z = -30; g.vx = g.vz = 0;
+    p.x = 0; p.z = -40;
+    step(m, {}, 30 * 2);
+    expect(Math.hypot(g.x, g.z + 30)).toBeLessThan(0.05);
+    p.x = 0.3; p.z = -30 - g.radius - p.radius - 0.2;
+    const z0 = g.z;
+    step(m, { mz: 1 }, 30 * 5);
+    expect(g.z - z0).toBeGreaterThan(3);
+    expect(Math.abs(p.x - g.x)).toBeLessThan(0.4); // blijft er recht achter
+  });
+  it('bevelen: volg mij, positie houden, verdedigen, aanvallen, commandant', () => {
+    const m = mkP('ott_janissary');
+    const p = m.player;
+    step(m, {}, 30 * 2);
+    const own = () => m.squads.filter((s) => s.team === 'ottoman' && s.order.kind !== 'guard' && s.order.kind !== 'siege');
+    step(m, { order: 'follow' }, 1);
+    step(m, {}, 30 * 3);
+    expect(own().every((s) => s.order.kind === 'follow')).toBe(true);
+    // speler loopt het veld in; het leger volgt
+    p.x = 0; p.z = -20;
+    step(m, {}, 30 * 40);
+    const near = m.units.filter((u) => u.alive && u.team === 'ottoman' && !u.isPlayer && u.squad?.order.kind === 'follow' && Math.hypot(u.x - p.x, u.z - p.z) < 30).length;
+    const all = m.units.filter((u) => u.alive && u.team === 'ottoman' && u.squad?.order.kind === 'follow').length;
+    expect(near / all).toBeGreaterThan(0.6);
+    step(m, { order: 'hold' }, 1);
+    step(m, {}, 30 * 3);
+    expect(own().every((s) => s.order.kind === 'hold')).toBe(true);
+    step(m, { order: 'defend' }, 1);
+    step(m, {}, 30 * 3);
+    expect(own().every((s) => ['defend', 'posts', 'keep'].includes(s.order.kind))).toBe(true);
+    step(m, { order: 'attack' }, 1);
+    step(m, {}, 30 * 3);
+    expect(own().every((s) => ['attack', 'raid'].includes(s.order.kind))).toBe(true);
+    step(m, { order: 'free' }, 1);
+    step(m, {}, 30 * 3);
+    expect(m.teamById.ottoman.playerOrder).toBeFalsy();
+  }, 30000);
 });

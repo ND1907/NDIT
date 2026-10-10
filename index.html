@@ -28,6 +28,15 @@
       <div id="dmg-dir"><div></div></div>
       <div id="announce"><div id="announce-title"></div><div id="announce-sub"></div></div>
       <div id="prompt"></div>
+      <div id="order-ind" title="Bevel aan je troepen (T)"></div>
+      <div id="orders" class="hidden">
+        <div class="orders-title">Bevel aan je leger</div>
+        <button data-order="follow"><b>Z</b> 🚩 Volg mij</button>
+        <button data-order="hold"><b>X</b> ✋ Positie houden</button>
+        <button data-order="defend"><b>C</b> 🏰 Verdedig het fort</button>
+        <button data-order="attack"><b>V</b> ⚔ Val aan</button>
+        <button data-order="free"><b>B</b> 🧭 Commandant beslist</button>
+      </div>
       <div id="bottom">
         <div id="hpbox">
           <div id="unit-name"></div>
@@ -50,6 +59,7 @@
         <button id="btn-jump" aria-label="Springen">⤒</button>
         <button id="btn-climb" class="hidden" aria-label="Muur op of af">⇅</button>
         <button id="btn-cry" class="hidden" aria-label="Strijdkreet">📯</button>
+        <button id="btn-orders" aria-label="Bevelen">📣</button>
       </div>
     </div>
     <div id="vignette"></div>
@@ -157,12 +167,14 @@
             <p>Elk rijk heeft een fort met een <b>donjon</b> (de grote toren). Breek door de poort of de muren van de vijand en <b>neem de donjon in</b>: sta met je troepen in de cirkel rond de donjon zonder verdedigers. Het rijk of bondgenootschap dat als laatste een donjon heeft, wint.</p>
             <h3>Verloop van een potje</h3>
             <ol>
-              <li><b>Opmars &amp; belegering</b> — legers verzamelen zich, veroveren dorpen op het veld (meer rekruten) en zetten blijdes, bombardes, stormrammen en belegeringstorens in.</li>
+              <li><b>Opmars &amp; belegering</b> — legers verzamelen zich, veroveren dorpen op het veld en zetten blijdes, bombardes, stormrammen en belegeringstorens in.</li>
               <li><b>Bres</b> — een poort of muur bezwijkt; het gevecht verplaatst zich naar het fort.</li>
               <li><b>Strijd om de donjon</b> — houd de cirkel bezet tot de banier valt. Een levende leider in de buurt vertraagt de inname.</li>
             </ol>
             <h3>Leiders</h3>
-            <p>Elke leider is sterker, heeft een lijfwacht en vaandeldrager, een <b>aura</b> die nabije soldaten versterkt en een <b>strijdkreet</b> (toets R). Sneuvelt een leider, dan daalt het moreel flink en komt hij pas na 2,5 minuut terug.</p>
+            <p>Elke leider is sterker, heeft een lijfwacht en vaandeldrager, een <b>aura</b> die nabije soldaten versterkt en een <b>strijdkreet</b> (toets R). Sneuvelt een leider, dan daalt het moreel flink; hij komt niet terug.</p>
+            <h3>Bevelen en munitie</h3>
+            <p>Geef je leger bevelen (T of 📣): <b>volg mij</b>, <b>positie houden</b>, <b>verdedig het fort</b>, <b>val aan</b> of laat de <b>commandant</b> beslissen. Pijlen en kogels raken op: vul aan bij een <b>📦 munitiewagen</b> (in je fort en bij het verzamelpunt, geel op de kaart), langzaam binnen je eigen fort of op de muur, of raap ze op bij gesneuvelden (E).</p>
           </section>
           <section>
             <h3>Besturing (computer)</h3>
@@ -174,10 +186,13 @@
               <tr><td>E</td><td>ladder op/af de muur · paard bestijgen/afstijgen</td></tr>
               <tr><td>Spatie</td><td>springen (te paard hoger en verder, ook over lage muurtjes)</td></tr>
               <tr><td>R</td><td>strijdkreet (alleen als leider)</td></tr>
+              <tr><td>T</td><td>bevelenmenu (of direct: Z volg mij · X positie houden · C verdedig het fort · V val aan · B commandant beslist)</td></tr>
+              <tr><td>E bij lijken</td><td>pijlen, bouten en kogels oprapen · bij een 📦 munitiewagen vult munitie vanzelf aan</td></tr>
+              <tr><td>Tegen tuig aan lopen</td><td>eigen bombarde, ram of belegeringstoren duwen (meer duwers = sneller)</td></tr>
               <tr><td>Esc / P</td><td>pauze</td></tr>
             </table>
             <h3>Besturing (telefoon)</h3>
-            <p>Linkerhelft slepen = lopen (ver duwen = rennen) · rechterhelft slepen = richten · <b>AANVAL</b> ingedrukt houden · ⇄ wapen · ⇅ muur op/af · 📯 strijdkreet.</p>
+            <p>Linkerhelft slepen = lopen (ver duwen = rennen) · rechterhelft slepen = richten · <b>AANVAL</b> ingedrukt houden · ⇄ wapen · ⇅ muur op/af · 📯 strijdkreet · 📣 bevelen aan je leger.</p>
           </section>
           <section>
             <h3>Wat wint van wat?</h3>

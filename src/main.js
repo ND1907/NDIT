@@ -523,7 +523,13 @@ function playerInput(dt) {
   if (A.cry) inp.cry = true;
   if (A.climb) inp.climb = true;
   if (A.jump) inp.jump = true;
-  controls.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
+  if (A.ordersMenu) hud.toggleOrders();
+  if (A.order) {
+    inp.order = A.order;
+    hud.toggleOrders(false);
+  }
+  controls.ordersOpen = hud.ordersOpen;
+  controls.actions = { switch: false, climb: false, cry: false, jump: false, select: null, order: null };
   inp.aim = null;
   if (inp.attack && p) {
     const w = p.weapons[p.wi];
@@ -620,4 +626,4 @@ show('menu');
 screenStack = ['menu'];
 requestAnimationFrame(frame);
 window.__UNITS_ALL = UNITS;
-window.__app = { get match() { return match; }, get view() { return view; }, get state() { return state; }, startMatch, setup, pause, controls };
+window.__app = { get match() { return match; }, get view() { return view; }, get state() { return state; }, startMatch, setup, pause, controls, hud };

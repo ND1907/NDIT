@@ -199,6 +199,7 @@ body[data-w='melee'] #crosshair { opacity: 0.4; }
 #weaponbox { display: flex; flex-direction: column; min-width: 150px; }
 #weapon-name { font-size: 13px; font-weight: 700; }
 #ammo { font-size: 12px; color: var(--parch2); font-variant-numeric: tabular-nums; }
+#ammo.low { color: #ff8a5c; font-weight: 700; }
 #reload-bar { height: 3px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; margin-top: 4px; overflow: hidden; }
 #reload-fill { height: 100%; background: var(--brass); width: 100%; }
 #ability { font-size: 12px; display: flex; gap: 6px; align-items: center; position: relative; overflow: hidden; }
@@ -260,3 +261,15 @@ body.dead-mode #minimap { pointer-events: auto; cursor: crosshair; outline: 2px 
   .help-cols { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { #announce.show, .spinner { animation-duration: 0.01s; } }
+
+/* bevelen aan het leger */
+#order-ind { position: absolute; top: calc(166px + var(--st)); left: calc(8px + var(--sl)); background: var(--panel); border-radius: 8px; padding: 4px 9px; font-size: 12px; color: var(--parch2); pointer-events: none; }
+#order-ind.active { color: #ffe39a; box-shadow: 0 0 0 1px rgba(242, 201, 76, 0.55); }
+#orders { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(20, 14, 8, 0.86); border: 1px solid rgba(242, 201, 76, 0.4); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 230px; z-index: 5; }
+#orders.hidden { display: none; }
+#orders .orders-title { font-weight: 800; text-align: center; color: #ffe39a; margin-bottom: 2px; }
+#orders button { text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.06); color: inherit; font-size: 14px; pointer-events: auto; touch-action: none; }
+#orders button b { display: inline-block; min-width: 18px; background: var(--brass); color: #2a1800; border-radius: 4px; padding: 0 4px; margin-right: 6px; text-align: center; }
+#orders button.on { background: rgba(242, 201, 76, 0.22); border-color: rgba(242, 201, 76, 0.7); }
+#btn-orders { right: 178px; bottom: 64px; width: 50px; height: 50px; font-size: 20px; }
+@media (pointer: coarse) { #orders button b { display: none; } }

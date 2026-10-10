@@ -34,17 +34,33 @@ mat4 skinMat() {
   if (aWeight.w > 0.0) m += boneMat(aSkin.w) * aWeight.w;
   return m;
 }
-vec3 instTint() {
+vec4 instInfo() {
   int base = int((uOffset + float(gl_InstanceID)) * uStride + uStride - 1.0 + 0.5);
-  return boneTexel(base).rgb;
+  return boneTexel(base);
 }
+vec3 instTint() { return instInfo().rgb; }
+#ifdef USE_COAT
+attribute vec3 aCoat;
+// vachtpatroon: alfa van de info-texel = points + 2 × sokken (0..3) + 8 × bles
+vec3 coatColor() {
+  vec4 it = instInfo();
+  float code = it.a;
+  float pts = mod(code, 2.0);
+  float sock = mod(floor(code / 2.0 + 0.01), 4.0);
+  float blaze = floor(code / 8.0 + 0.01);
+  vec3 c = mix(it.rgb, vec3(0.05, 0.04, 0.035), pts * aCoat.x);
+  float sh = sock < 0.5 ? -1.0 : sock < 1.5 ? 0.13 : sock < 2.5 ? 0.25 : 0.5;
+  float white = max(1.0 - smoothstep(sh - 0.03, sh + 0.03, aCoat.y), blaze * aCoat.z);
+  return mix(c, vec3(0.9, 0.88, 0.84), white);
+}
+#endif
 `;
 
 function patchVertex(src, withNormal) {
   src = src.replace('#include <common>', '#include <common>\n' + VERT_HEAD);
   if (withNormal) {
     src = src.replace('#include <beginnormal_vertex>', 'mat4 bMat = skinMat();\nvec3 objectNormal = normalize(mat3(bMat) * normal + 1e-6);\n#ifdef USE_TANGENT\nvec3 objectTangent = vec3( tangent.xyz );\n#endif');
-    src = src.replace('#include <begin_vertex>', 'vec3 transformed = (bMat * vec4(position, 1.0)).xyz;\nvMetal = aMetal;\nvAO = aAO;\nvTintCol = mix(vec3(1.0), instTint(), aTint);');
+    src = src.replace('#include <begin_vertex>', 'vec3 transformed = (bMat * vec4(position, 1.0)).xyz;\nvMetal = aMetal;\nvAO = aAO;\n#ifdef USE_COAT\nvTintCol = mix(vec3(1.0), coatColor(), aTint);\n#else\nvTintCol = mix(vec3(1.0), instTint(), aTint);\n#endif');
   } else {
     src = src.replace('#include <begin_vertex>', 'vec3 transformed = (skinMat() * vec4(position, 1.0)).xyz;\nvMetal = aMetal;\nvAO = aAO;\nvTintCol = vec3(1.0);');
   }
@@ -81,7 +97,8 @@ export class CrowdRenderer {
       opts.normalMap = maps.normalMap;
       opts.normalScale = new THREE.Vector2(0.9, 0.9);
     }
-    const mat = low ? new THREE.MeshLambertMaterial(opts) : new THREE.MeshStandardMaterial({ ...opts, roughness: 0.86, metalness: 0 });
+    const mat = low ? new THREE.MeshLambertMaterial(opts) : new THREE.MeshStandardMaterial({ ...opts, roughness: maps?.roughness ?? 0.86, metalness: 0 });
+    if (maps?.coat) mat.defines = { ...(mat.defines || {}), USE_COAT: '' };
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = patchVertex(shader.vertexShader, true);
@@ -96,7 +113,7 @@ export class CrowdRenderer {
       }
       shader.fragmentShader = f;
     };
-    mat.customProgramCacheKey = () => 'crowd2-' + this.quality + (maps?.map ? 'm' : '') + (maps?.normalMap ? 'n' : '');
+    mat.customProgramCacheKey = () => 'crowd2-' + this.quality + (maps?.map ? 'm' : '') + (maps?.normalMap ? 'n' : '') + (maps?.coat ? 'c' : '');
     const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     depth.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);

@@ -8,6 +8,7 @@ import { HORSE_HEADER, HORSE_BIN } from './assets/horse-data.js';
 // rustposities van het paardenskelet (modelruimte)
 export const HORSE_BIND = new Float32Array(HORSE_HEADER.bind.flat());
 let HORSE_BASE = null;
+let HORSE_GRIDS = null;
 function horseBase() {
   if (HORSE_BASE) return HORSE_BASE;
   const s = atob(HORSE_BIN);
@@ -16,6 +17,17 @@ function horseBase() {
   const raw = unzlibSync(u8);
   const b = raw.buffer;
   const o0 = raw.byteOffset;
+  HORSE_GRIDS = {};
+  for (const [k, G] of Object.entries(HORSE_HEADER.grids || {})) {
+    const n = G.nu * G.nv;
+    HORSE_GRIDS[k] = {
+      nu: G.nu, nv: G.nv,
+      pos: new Float32Array(b, o0 + G.pos, n * 3),
+      nor: new Int8Array(b, o0 + G.nor, n * 4),
+      si: new Uint8Array(b, o0 + G.si, n * 4),
+      sw: new Uint8Array(b, o0 + G.sw, n * 4),
+    };
+  }
   HORSE_BASE = HORSE_HEADER.lods.map((L) => ({
     n: L.count,
     pos: new Float32Array(b, o0 + L.pos, L.count * 3),
@@ -28,7 +40,9 @@ function horseBase() {
   return HORSE_BASE;
 }
 // paardenlichaam: vacht (tint), manen/staart, hoeven, snuit
-function horseBodyGeo(lod, mane = '#1e1610') {
+// aCoat: x = 'points' (zwarte benen, manen, staart, oorranden bij bruin/zwart),
+//        y = hoogte op het been (voor witte sokken), z = bles op het hoofd
+function horseBodyGeo(lod) {
   const H = horseBase()[Math.min(2, lod)];
   const n = H.n;
   const col = new Float32Array(n * 3);
@@ -38,22 +52,39 @@ function horseBodyGeo(lod, mane = '#1e1610') {
   const uv = new Float32Array(n * 2);
   const tint = new Float32Array(n);
   const ao = new Float32Array(n);
-  const cm = new THREE.Color(mane);
+  const coat = new Float32Array(n * 3);
   const sw = ATLAS.sw.fur;
+  const LEG = new Set([PB.FL_L, PB.FR_L, PB.HL_L, PB.HR_L, PB.FL_P, PB.FR_P, PB.HL_P, PB.HR_P, PB.FL_U, PB.FR_U, PB.HL_U, PB.HR_U]);
   for (let i = 0; i < n; i++) {
     const r = H.rg[i * 4];
-    const c = r === 0 ? [1, 1, 1] : r === 1 ? [cm.r, cm.g, cm.b] : r === 2 ? [0.06, 0.05, 0.045] : [0.25, 0.2, 0.18];
-    col.set(c, i * 3);
-    tint[i] = r === 0 ? 1 : r === 3 ? 0.6 : 0;
-    ao[i] = H.rg[i * 4 + 1] / 255;
-    for (let k = 0; k < 3; k++) nor[i * 3 + k] = H.nor[i * 4 + k] / 127;
-    for (let k = 0; k < 4; k++) {
-      skin[i * 4 + k] = H.si[i * 4 + k];
-      wts[i * 4 + k] = H.sw[i * 4 + k] / 255;
-    }
     const x = H.pos[i * 3];
     const y = H.pos[i * 3 + 1];
     const z = H.pos[i * 3 + 2];
+    // vacht 1, manen/staart iets donkerder dan de vacht, hoef hoorn, snuit/oog donkere huid
+    const c = r === 0 ? [1, 1, 1] : r === 1 ? [0.62, 0.6, 0.58] : r === 2 ? [0.07, 0.06, 0.055] : [0.09, 0.08, 0.075];
+    col.set(c, i * 3);
+    tint[i] = r === 0 || r === 1 ? 1 : r === 3 ? 0.7 : 0;
+    ao[i] = H.rg[i * 4 + 1] / 255;
+    for (let k = 0; k < 3; k++) nor[i * 3 + k] = H.nor[i * 4 + k] / 127;
+    let topB = 0;
+    let topW = -1;
+    for (let k = 0; k < 4; k++) {
+      skin[i * 4 + k] = H.si[i * 4 + k];
+      wts[i * 4 + k] = H.sw[i * 4 + k] / 255;
+      if (wts[i * 4 + k] > topW) {
+        topW = wts[i * 4 + k];
+        topB = H.si[i * 4 + k];
+      }
+    }
+    const leg = LEG.has(topB) && y < 0.95;
+    const pts = r === 1 ? 1 : leg ? Math.min(1, Math.max(0, (0.66 - y) / 0.2)) : y > 2.08 ? 0.8 : 0;
+    // bles: smalle strook over het voorhoofd en de neusrug
+    const face = topB === PB.HEAD && z > 1.03 && y > 1.52 && r !== 1;
+    const along = (z - 1.03) / 0.36;
+    const blaze = face ? Math.max(0, 1 - Math.abs(x) / (0.022 + 0.012 * along)) * (nor[i * 3 + 2] + nor[i * 3 + 1] * 0.6 > 0.2 ? 1 : 0) : 0;
+    coat[i * 3] = pts;
+    coat[i * 3 + 1] = leg ? y : 9;
+    coat[i * 3 + 2] = blaze > 0.3 ? 1 : 0;
     uv[i * 2] = sw[0] + 0.004 + (sw[2] - sw[0] - 0.008) * tri(z * 1.3 + x * 0.5);
     uv[i * 2 + 1] = sw[1] + 0.004 + (sw[3] - sw[1] - 0.008) * tri(y * 1.7);
   }
@@ -67,7 +98,95 @@ function horseBodyGeo(lod, mane = '#1e1610') {
   g.setAttribute('aMetal', new THREE.BufferAttribute(new Float32Array(n), 1));
   g.setAttribute('aTint', new THREE.BufferAttribute(tint, 1));
   g.setAttribute('aAO', new THREE.BufferAttribute(ao, 1));
+  g.setAttribute('aCoat', new THREE.BufferAttribute(coat, 3));
   g.setIndex(new THREE.BufferAttribute(new Uint32Array(H.idx), 1));
+  return g;
+}
+
+// Over het lijf gedrapeerd raster (kleed, riem, harnas, manen) als geometrie.
+// paint(u, v) → null (cel weglaten) of { c: kleur, metal, mat, region }; step = dunner raster voor verre LOD's
+function horseGrid(name, paint, step = 1) {
+  horseBase();
+  const G = HORSE_GRIDS[name];
+  if (!G) return null;
+  const us = [];
+  const vs = [];
+  for (let i = 0; i < G.nu; i += step) us.push(i);
+  if (us[us.length - 1] !== G.nu - 1) us.push(G.nu - 1);
+  for (let j = 0; j < G.nv; j += step) vs.push(j);
+  if (vs[vs.length - 1] !== G.nv - 1) vs.push(G.nv - 1);
+  const nu = us.length;
+  const nv = vs.length;
+  const n = nu * nv;
+  const pos = new Float32Array(n * 3);
+  const nor = new Float32Array(n * 3);
+  const col = new Float32Array(n * 3);
+  const uv = new Float32Array(n * 2);
+  const skin = new Float32Array(n * 4);
+  const wts = new Float32Array(n * 4);
+  const metal = new Float32Array(n);
+  const tint = new Float32Array(n);
+  const coat = new Float32Array(n * 3);
+  const ok = new Uint8Array(n);
+  for (let b = 0; b < nv; b++) for (let a = 0; a < nu; a++) {
+    const k = b * nu + a;
+    const src = vs[b] * G.nu + us[a];
+    const u = us[a] / (G.nu - 1);
+    const v = vs[b] / (G.nv - 1);
+    const f = paint(u, v);
+    if (!f) continue;
+    ok[k] = 1;
+    for (let q = 0; q < 3; q++) {
+      pos[k * 3 + q] = G.pos[src * 3 + q];
+      nor[k * 3 + q] = G.nor[src * 4 + q] / 127;
+    }
+    _c.set(f.c);
+    col[k * 3] = _c.r;
+    col[k * 3 + 1] = _c.g;
+    col[k * 3 + 2] = _c.b;
+    const sw = ATLAS.sw[f.mat || (f.metal > 0.5 ? 'metal' : 'cloth')];
+    uv[k * 2] = sw[0] + 0.004 + (sw[2] - sw[0] - 0.008) * tri(u * 3.1 + v * 0.3);
+    uv[k * 2 + 1] = sw[1] + 0.004 + (sw[3] - sw[1] - 0.008) * tri(v * 2.3);
+    for (let q = 0; q < 4; q++) {
+      skin[k * 4 + q] = G.si[src * 4 + q];
+      wts[k * 4 + q] = G.sw[src * 4 + q] / 255;
+    }
+    metal[k] = f.metal || 0;
+    // manen krijgen de vachtkleur (via het patroon: zwart bij 'points')
+    if (f.region === 1) {
+      tint[k] = 1;
+      coat[k * 3] = 1;
+    }
+    coat[k * 3 + 1] = 9;
+  }
+  const idx = [];
+  for (let b = 0; b < nv - 1; b++) for (let a = 0; a < nu - 1; a++) {
+    const i0 = b * nu + a;
+    const i1 = i0 + 1;
+    const i2 = i0 + nu;
+    const i3 = i2 + 1;
+    if (!(ok[i0] && ok[i1] && ok[i2] && ok[i3])) continue;
+    // winding naar buiten (zelfde kant als de normaal)
+    const ax = pos[i1 * 3] - pos[i0 * 3], ay = pos[i1 * 3 + 1] - pos[i0 * 3 + 1], az = pos[i1 * 3 + 2] - pos[i0 * 3 + 2];
+    const bx = pos[i2 * 3] - pos[i0 * 3], by = pos[i2 * 3 + 1] - pos[i0 * 3 + 1], bz = pos[i2 * 3 + 2] - pos[i0 * 3 + 2];
+    const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+    const out = cx * nor[i0 * 3] + cy * nor[i0 * 3 + 1] + cz * nor[i0 * 3 + 2] > 0;
+    if (out) idx.push(i0, i1, i3, i0, i3, i2);
+    else idx.push(i0, i3, i1, i0, i2, i3);
+  }
+  if (!idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aSkin', new THREE.BufferAttribute(skin, 4));
+  g.setAttribute('aWeight', new THREE.BufferAttribute(wts, 4));
+  g.setAttribute('aMetal', new THREE.BufferAttribute(metal, 1));
+  g.setAttribute('aTint', new THREE.BufferAttribute(tint, 1));
+  g.setAttribute('aAO', new THREE.BufferAttribute(new Float32Array(n).fill(1), 1));
+  g.setAttribute('aCoat', new THREE.BufferAttribute(coat, 3));
+  g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
   return g;
 }
 
@@ -205,6 +324,10 @@ class MB {
   }
 
   build() {
+    // aCoat (vachtpatroon) alleen op het paardenlichaam; andere onderdelen krijgen nullen
+    if (this.geos.some((x) => x.attributes.aCoat)) {
+      for (const x of this.geos) if (!x.attributes.aCoat) x.setAttribute('aCoat', new THREE.BufferAttribute(new Float32Array(x.attributes.position.count * 3).fill(0).map((_, k) => (k % 3 === 1 ? 9 : 0)), 3));
+    }
     const g = mergeGeometries(this.geos, false);
     for (const x of this.geos) x.dispose();
     g.computeBoundingSphere();
@@ -1168,7 +1291,7 @@ export function buildBanner(color, color2, lod) {
 // Paard met schabrak/barding in factiekleuren (vacht via tint)
 // ---------------------------------------------------------------------------
 const HORSE_DRESS = {
-  ottoman: { cloth: '#9b1d20', trim: '#d4a72c', saddle: '#5a2a1a', plume: '#efe8d8' },
+  ottoman: { cloth: '#9b1d20', trim: '#d4a72c', saddle: '#5a2a1a', plume: '#b3141f', motif: true },
   byzantine: { cloth: '#7a1e1e', trim: '#d4a72c', saddle: '#3a2a1a', mail: true },
   genoa: { cloth: '#f2f0ea', trim: '#c8102e', saddle: '#3a2a1a' },
   venice: { cloth: '#8e1b1b', trim: '#e3b23c', saddle: '#3a2a1a', plate: true },
@@ -1181,24 +1304,51 @@ export function buildHorseModel(faction, lod) {
   const b = new MB(Math.min(1, lod), HORSE_BIND, false);
   b.addRaw(horseBodyGeo(lod));
   const B = PB.BODY;
-  // hoofdstel en teugels
-  b.box(PB.HEAD, 0.2, 0.025, 0.025, '#2a1a10', { p: [0, -0.07, 0.2], r: [-0.8, 0, 0], mat: 'leather' });
-  b.box(PB.HEAD, 0.19, 0.025, 0.025, '#2a1a10', { p: [0, -0.24, 0.38], r: [-0.8, 0, 0], mat: 'leather' });
-  b.box(PB.HEAD, 0.21, 0.025, 0.025, '#2a1a10', { p: [0, 0.04, 0.02], r: [0.2, 0, 0], mat: 'leather', detail: true });
-  // schabrak (kleed) en zadel met hoge boom
-  b.lathe(B, [[0.0, 0.47], [0.34, 0.4], [0.42, 0.1], [0.43, -0.2]], D.cloth, { s: [1, 1, 1.45], p: [0, 0, -0.02], open: true, seg: 16 });
-  b.lathe(B, [[0.432, -0.2], [0.436, -0.26]], D.trim, { s: [1, 1, 1.45], p: [0, 0, -0.02], open: true, seg: 16, detail: true });
-  if (D.stripes && !lod) for (let i = 0; i < 4; i++) b.lathe(B, [[0.428 - i * 0.002, 0.1 - i * 0.07], [0.43 - i * 0.002, 0.07 - i * 0.07]], '#f2f0ea', { s: [1, 1, 1.46], p: [0, 0, -0.02], open: true, seg: 16 });
-  b.box(B, 0.34, 0.08, 0.5, D.saddle, { p: [0, 0.48, 0.0], mat: 'leather' });
-  b.box(B, 0.3, 0.16, 0.06, D.saddle, { p: [0, 0.56, 0.24], mat: 'leather' });
-  b.box(B, 0.3, 0.13, 0.06, D.saddle, { p: [0, 0.55, -0.26], mat: 'leather' });
-  for (const s2 of [-1, 1]) b.box(B, 0.02, 0.4, 0.03, '#2a1a10', { p: [s2 * 0.2, 0.25, 0.05], mat: 'leather', detail: true });
-  if (D.mail) b.cyl(PB.NECK, 0.22, 0.29, 0.7, '#7d838c', { p: [0, 0.3, 0.06], r: [0.55, 0, 0], metal: 0.7, s: [0.85, 1, 1], open: true });
-  if (D.plate) b.box(PB.HEAD, 0.17, 0.05, 0.42, '#b5bcc6', { p: [0, 0.06, 0.18], r: [-0.85, 0, 0], metal: 1 });
+  // hoofdstel: neusriem, bakstukken, frontriem, kopstuk en bitringen (hoofdbot, nek = oorsprong)
+  const lea = { mat: 'leather' };
+  b.torus(PB.HEAD, 0.082, 0.012, '#2a1a10', { p: [0, -0.27, 0.31], r: [0.855, 0, 0], s: [0.95, 1.3, 1], ...lea });
+  for (const s2 of [-1, 1]) {
+    b.box(PB.HEAD, 0.014, 0.37, 0.026, '#2a1a10', { p: [s2 * 0.083, -0.12, 0.14], r: [-0.785, 0, 0], ...lea });
+    b.torus(PB.HEAD, 0.022, 0.006, '#9a9488', { p: [s2 * 0.07, -0.36, 0.33], r: [0, Math.PI / 2, 0], metal: 0.9, detail: true });
+  }
+  b.box(PB.HEAD, 0.2, 0.022, 0.02, '#2a1a10', { p: [0, 0.04, 0.12], ...lea });
+  b.box(PB.HEAD, 0.19, 0.025, 0.03, '#2a1a10', { p: [0, 0.08, -0.02], ...lea });
+  // manen (hangen naar rechts) — krijgen de vachtkleur via het patroon
+  const step = lod >= 2 ? 3 : lod === 1 ? 2 : 1;
+  const add = (g) => g && b.addRaw(g);
+  add(horseGrid('mane', () => ({ c: '#9e9890', region: 1, mat: 'fur' }), step));
+  // zadelkleed (çul/schabrak) met boord, over het lijf gedrapeerd
+  add(horseGrid('blanket', (u, v) => {
+    const e = Math.min(u, 1 - u, v, 1 - v);
+    let c = e < 0.05 ? D.trim : D.cloth;
+    if (D.stripes && e >= 0.05 && Math.floor(v * 9) % 2 === 1) c = '#f2f0ea';
+    if (D.motif && e >= 0.05 && Math.abs(Math.abs(v - 0.5) - 0.32) < 0.025) c = D.trim;
+    return { c, mat: 'cloth' };
+  }, step));
+  // riemen: borstriem, singel en staartriem
+  for (const k of ['breast', 'girth', 'crupper']) add(horseGrid(k, () => ({ c: D.saddle, mat: 'leather' }), step));
+  if (D.plate) {
+    add(horseGrid('peytral', (u, v) => ({ c: Math.floor(v * 6) % 2 ? '#aab1bb' : '#bcc3cc', metal: 1 }), step));
+    add(horseGrid('crinet', (u) => ({ c: Math.floor(u * 7) % 2 ? '#aab1bb' : '#bcc3cc', metal: 1 }), step));
+    add(horseGrid('chanfron', () => ({ c: '#c0c6cf', metal: 1 }), step));
+  }
+  if (D.mail) {
+    add(horseGrid('mailneck', () => ({ c: '#7d838c', metal: 0.7 }), step));
+    add(horseGrid('peytral', () => ({ c: '#7d838c', metal: 0.7 }), step));
+  }
+  // zadel: zitting met hoge voorboom (knop) en achterboom, stijgbeugels aan leren riemen
+  b.box(B, 0.3, 0.06, 0.46, D.saddle, { p: [0, 0.33, 0.0], mat: 'leather' });
+  b.box(B, 0.24, 0.14, 0.05, D.saddle, { p: [0, 0.4, 0.22], r: [-0.25, 0, 0], mat: 'leather' });
+  b.box(B, 0.28, 0.12, 0.05, D.saddle, { p: [0, 0.39, -0.22], r: [0.3, 0, 0], mat: 'leather' });
+  b.sph(B, 0.025, '#c9a24a', { p: [0, 0.49, 0.25], metal: 0.9, detail: true });
+  for (const s2 of [-1, 1]) {
+    b.box(B, 0.015, 0.42, 0.035, '#2a1a10', { p: [s2 * 0.27, 0.1, 0.05], r: [0, 0, s2 * 0.12], mat: 'leather', detail: true });
+    b.torus(B, 0.05, 0.008, '#8a8478', { p: [s2 * 0.3, -0.13, 0.05], r: [0, Math.PI / 2, 0], metal: 0.9, detail: true });
+  }
   if (D.plume) {
-    // kwast (püskül) achter de oren, naar achteren hangend
-    b.sph(PB.HEAD, 0.035, '#c9a24a', { p: [0, 0.16, -0.04], metal: 0.8 });
-    b.cone(PB.HEAD, 0.05, 0.2, D.plume, { p: [0, 0.12, -0.14], r: [2.2, 0, 0], seg: 6, mat: 'fur' });
+    // püskül: rode kwast onder de keel aan het hoofdstel
+    b.sph(PB.HEAD, 0.03, '#c9a24a', { p: [0, -0.2, 0.05], metal: 0.8 });
+    b.cone(PB.HEAD, 0.055, 0.2, D.plume, { p: [0, -0.31, 0.04], r: [Math.PI, 0, 0], seg: 8, mat: 'fur' });
   }
   return b.build();
 }

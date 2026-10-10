@@ -17,9 +17,10 @@ De bronbestanden staan in `assets-src/makehuman/`. `scripts/build-human.mjs` zet
 
 ## Zelf gemaakt (geen externe bestanden)
 
-- **Paarden.** Een signed distance field van vloeiend samengevoegde vormen, omgezet met surface nets en geskind op het paardenskelet (`scripts/build-horse.mjs`).
+- **Paarden.** Een anatomisch signed distance field (spieren, gewrichten, hoofd, manen, staart) van vloeiend samengevoegde vormen. Het is omgezet met surface nets, geskind op een paardenskelet met 17 botten, en voorzien van zadelkleed, riemen en harnas die over het lijf zijn gedrapeerd (`scripts/build-horse.mjs`).
 - **Kleding, harnassen, gezichten en haar.** Geschilderd in de UV-ruimte van het lichaam op basis van 3D-positie (`src/render/human.js`).
 - **Helmen, schilden, wapens en belegeringstuig.** Opgebouwd uit geometrische vormen (`src/render/models.js`).
+- **Munitiewagens.** Opgebouwd uit geometrische vormen (`src/render/world.js`).
 - **Overige assets.** Alle texturen, vlaggen, wapens, het geluid en de muziek worden in code gegenereerd.
 
 ## Gereedschap (npm)

@@ -110,29 +110,45 @@ export class NavGrid {
     return c;
   }
 
-  costsFor(alliance, allianceOf) {
+  // wide = voor breed belegeringstuig: vaste obstakels (bomen, huizen) een cel breder maken
+  costsFor(alliance, allianceOf, wide = false) {
     this._costs = this._costs || new Map();
-    const c = this._costs.get(alliance);
+    const ck = alliance + (wide ? '|w' : '');
+    const c = this._costs.get(ck);
     if (c && c.version === this.version) return c.arr;
     const N = this.n * this.n;
     const arr = c && c.arr.length === N ? c.arr : new Float32Array(N);
-    for (let i = 0; i < N; i++) arr[i] = this.cost(i, alliance, allianceOf);
-    this._costs.set(alliance, { arr, version: this.version });
+    if (!wide) for (let i = 0; i < N; i++) arr[i] = this.cost(i, alliance, allianceOf);
+    else {
+      arr.set(this.costsFor(alliance, allianceOf));
+      const n = this.n;
+      for (let i = 0; i < N; i++) {
+        if (!this.blocked[i] || this.outside[i]) continue;
+        const cx = i % n;
+        const cz = (i / n) | 0;
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx;
+          const z = cz + dz;
+          if (x >= 0 && z >= 0 && x < n && z < n) arr[z * n + x] = INF;
+        }
+      }
+    }
+    this._costs.set(ck, { arr, version: this.version });
     return arr;
   }
 
   // Afstandsveld naar doelcellen (lijst van [x, z, r]), in één keer.
-  compute(key, goals, alliance, allianceOf) {
-    const job = this.startJob(key, goals, alliance, allianceOf);
+  compute(key, goals, alliance, allianceOf, wide = false) {
+    const job = this.startJob(key, goals, alliance, allianceOf, wide);
     this.runJob(job, Infinity);
     return job.field;
   }
 
   // Tijdgesneden variant: elke frame een beperkt aantal cellen verwerken.
-  startJob(key, goals, alliance, allianceOf) {
+  startJob(key, goals, alliance, allianceOf, wide = false) {
     const N = this.n * this.n;
     const dist = new Float32Array(N).fill(INF);
-    const costs = this.costsFor(alliance, allianceOf);
+    const costs = this.costsFor(alliance, allianceOf, wide);
     const heap = new BinaryHeap(N);
     for (const [gx, gz, gr] of goals) {
       const r = gr + this.cell;

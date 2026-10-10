@@ -61,12 +61,12 @@ const U = (o) => ({ hp: 100, armor: 'light', speed: 4.4, shield: null, mounted: 
 
 export const UNITS = {
   // ===== Ottomaanse Rijk =====
-  ott_janissary: U({ faction: 'ottoman', name: 'Janitsaar', role: 'archer', weapons: ['turkbow', 'kilij'], model: 'janissary', cost: 11 }),
+  ott_janissary: U({ faction: 'ottoman', name: 'Janitsaar', role: 'archer', weapons: ['turkbow', 'kilij'], armor: 'medium', hp: 115, model: 'janissary', cost: 11 }),
   ott_tufekci:   U({ faction: 'ottoman', name: 'Janitsaar-tüfekçi', role: 'gunner', weapons: ['arquebus', 'kilij'], model: 'janissary_gun', cost: 14, weaponName: 'Tüfek (haakbus)' }),
   ott_azap:      U({ faction: 'ottoman', name: 'Azap', role: 'spear', weapons: ['spear', 'javelin'], armor: 'none', shield: 'round', model: 'azap', cost: 6, hp: 90 }),
   ott_sipahi:    U({ faction: 'ottoman', name: 'Sipahi', role: 'cavalry', weapons: ['lance', 'kilij'], armor: 'medium', shield: 'round', mounted: true, hp: 150, speed: 11, model: 'sipahi', cost: 24 }),
   ott_solak:     U({ faction: 'ottoman', name: 'Solak (lijfwacht)', role: 'guard', weapons: ['turkbow', 'kilij'], armor: 'medium', hp: 130, model: 'solak', cost: 0 }),
-  ott_bombard:   U({ faction: 'ottoman', name: 'Bombarde van Urban', role: 'siege', weapons: ['bombard'], armor: 'heavy', hp: 900, speed: 1.3, model: 'bombard', cost: 70, structure: 'wood' }),
+  ott_bombard:   U({ faction: 'ottoman', name: 'Bombarde van Urban', role: 'siege', weapons: ['bombard'], armor: 'heavy', hp: 1200, speed: 1.3, model: 'bombard', cost: 70, structure: 'wood' }),
   ott_ram:       U({ faction: 'ottoman', name: 'Stormram', role: 'ram', weapons: ['ram'], armor: 'heavy', hp: 1500, speed: 1.8, model: 'ram', cost: 45, structure: 'wood' }),
   ott_tower:     U({ faction: 'ottoman', name: 'Belegeringstoren', role: 'tower', weapons: [], armor: 'heavy', hp: 1600, speed: 1.2, model: 'tower', cost: 60, structure: 'wood' }),
   ott_leader:    U({ faction: 'ottoman', name: 'Sultan Mehmed II', role: 'leader', weapons: ['kilij', 'mace'], armor: 'medium', shield: null, mounted: true, hp: 950, speed: 9, model: 'mehmed', cost: 0 }),
@@ -166,11 +166,12 @@ export const LEADERS = {
 export const FACTIONS = {
   ottoman: {
     id: 'ottoman', name: 'Ottomaanse Rijk', short: 'Ottomanen', color: '#b3141f', color2: '#e8d9b0', ui: '#e24a3f', side: 'ottoman',
-    fortStyle: 'ottoman', incomeMult: 1.1, power: 1.42,
-    style: 'Grootste leger, Turkse bogen, sipahi-ruiters en de enorme bombardes van Urban.',
+    // het sterkste leger van 1453: gedrild staand leger (kapıkulu), betaalde janitsaren en de grootste artillerie van zijn tijd
+    fortStyle: 'ottoman', incomeMult: 1.1, power: 1.6, dmg: 1.12, moraleBase: 72, moraleLoss: 0.55,
+    style: 'Het best georganiseerde leger van zijn tijd: gedisciplineerde janitsaren, Turkse bogen, sipahi-ruiters en twee reuzenbombardes van Urban.',
     roster: ['ott_janissary', 'ott_tufekci', 'ott_azap', 'ott_sipahi'],
-    mix: { ott_azap: 0.35, ott_janissary: 0.32, ott_tufekci: 0.13, ott_sipahi: 0.2 },
-    siege: ['ott_bombard', 'ott_ram', 'ott_tower'],
+    mix: { ott_azap: 0.3, ott_janissary: 0.36, ott_tufekci: 0.14, ott_sipahi: 0.2 },
+    siege: ['ott_bombard', 'ott_ram', 'ott_tower', 'ott_bombard'],
   },
   byzantine: {
     id: 'byzantine', name: 'Byzantijnse Rijk', short: 'Byzantijnen', color: '#5b1a7a', color2: '#d4a72c', ui: '#a35ad6', side: 'christian',

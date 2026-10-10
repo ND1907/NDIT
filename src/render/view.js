@@ -11,7 +11,20 @@ import { UNITS, WEAPONS, FACTIONS } from '../sim/data.js';
 const SKY_TOP = new THREE.Color('#6f9ccc');
 const SKY_HOR = new THREE.Color('#e8dcc4');
 
-const COATS = [[0.42, 0.25, 0.14], [0.1, 0.08, 0.07], [0.55, 0.32, 0.16], [0.72, 0.7, 0.66], [0.3, 0.2, 0.13], [0.86, 0.84, 0.8]];
+// paardenvachten (sRGB) en of de benen/manen/staart zwart zijn ('points')
+const lin = (h) => [0, 2, 4].map((k) => Math.pow(parseInt(h.slice(1 + k, 3 + k), 16) / 255, 2.2));
+const COATS = [
+  ['#7a4524', 1], // bruin (bay)
+  ['#4a2a17', 1], // donkerbruin
+  ['#8a4c2a', 0], // vos
+  ['#1c1715', 1], // zwart
+  ['#9d9a95', 0], // schimmel
+  ['#b08a55', 1], // valk (buckskin)
+  ['#5e321b', 0], // donkere vos
+  ['#7a4524', 1],
+].map(([h, p]) => [...lin(h), p]);
+const WHITE_HORSE = [...lin('#dcd8d0'), 0];
+const SOCKS = [0, 0, 0, 1, 1, 2, 3, 0];
 const SKIN = [[1, 1, 1], [0.93, 0.89, 0.86], [1.06, 1.0, 0.95], [0.86, 0.79, 0.74], [0.98, 0.94, 0.9]];
 
 const _proj = new THREE.Vector3();
@@ -107,6 +120,7 @@ export class GameView {
     this.siege = new CrowdRenderer(this.scene, { nb: SIEGE_NB, capacity: 64, quality: this.quality, name: 'tuig' });
     this.hPose = makePose(HUMAN_SKEL);
     this.pPose = makePose(HORSE_SKEL);
+    this.rPose = makePose(HORSE_SKEL);
     this.sPose = makePose(SIEGE_SKEL);
     this.info = new Map();
     // modellen voor alle eenheden van de facties in dit potje
@@ -154,7 +168,7 @@ export class GameView {
       { geo: buildHorseModel(faction, 0), maxDist: this.quality === 'low' ? 10 : 20, shadow: this.quality !== 'low' },
       { geo: buildHorseModel(faction, 1), maxDist: 60, shadow: this.quality === 'high' },
       { geo: buildHorseModel(faction, 2), maxDist: Infinity, shadow: false },
-    ], neutralTextures());
+    ], { map: neutralTextures().map, coat: true, roughness: 0.62 });
   }
 
   _siegeType(def) {
@@ -259,7 +273,11 @@ export class GameView {
         y += 0.8 * Math.sin(mk * Math.PI * 0.5);
       }
       if (u.mounted || (!u.alive && u.fellOff)) {
-        if (u.alive) y += 0.8 + Math.sin(u.gait * 2) * 0.04 * Math.min(1, u.speed / 6);
+        if (u.alive) {
+          // ruiter volgt het op en neer gaan van de paardenrug
+          const r = poseHorse(this.rPose, u, time);
+          y += 0.8 + (r.bob || 0) * 0.9;
+        }
         else {
           // van het paard gevallen
           const k = Math.min(1, u.deadT / 0.6);
@@ -283,10 +301,13 @@ export class GameView {
       if (!u.alive && u.deadT > 21) y -= (u.deadT - 21) * 0.3;
       const root = setRoot(u.x, y, u.z, u.yaw, 0, r.tilt || 0, 1);
       writeBones(data, o, root, pPose, HORSE_NB);
-      const c = u.isLeader ? (u.def.faction === 'ottoman' ? COATS[5] : COATS[1]) : COATS[u.variant % COATS.length];
+      const v = u.variant || 0;
+      const c = u.isLeader ? (u.def.faction === 'ottoman' ? WHITE_HORSE : COATS[3]) : COATS[v % COATS.length];
       data[to] = c[0];
       data[to + 1] = c[1];
       data[to + 2] = c[2];
+      // patroon: points + 2 × sokken + 8 × bles
+      data[to + 3] = c[3] + 2 * (u.isLeader ? 0 : SOCKS[(v >> 3) & 7]) + 8 * (((v >> 6) & 3) === 0 || (u.isLeader && u.def.faction !== 'ottoman') ? 1 : 0);
     });
     const sPose = this.sPose;
     S.end((u, data, o, to) => {

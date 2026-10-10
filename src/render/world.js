@@ -98,6 +98,63 @@ function place(g, x, y, z, ry = 0, rx = 0, rz = 0, s = 1) {
   return g;
 }
 
+// Munitiewagen: kar met kisten pijlen, bundels pijlen, vaatjes buskruit en een zeil.
+const _clothMat = new THREE.MeshLambertMaterial({ color: '#cbbd98', side: THREE.DoubleSide });
+const _fletchMat = new THREE.MeshLambertMaterial({ color: '#e9e2cf' });
+function supplyWagon(M, s, shadows) {
+  const wood = [];
+  const dark = [];
+  const cloth = [];
+  const fl = [];
+  // laadbak
+  wood.push(place(boxGeo(3.2, 0.12, 1.5, 2), 0, 0.85, 0));
+  for (const z of [-0.72, 0.72]) wood.push(place(boxGeo(3.2, 0.45, 0.07, 2), 0, 1.12, z));
+  for (const x of [-1.57, 1.57]) wood.push(place(boxGeo(0.07, 0.45, 1.5, 2), x, 1.12, 0));
+  // dissel
+  wood.push(place(boxGeo(2.2, 0.09, 0.09, 2), 2.6, 0.62, 0, 0, 0, -0.18));
+  // wielen met spaken
+  for (const x of [-0.95, 0.95]) for (const z of [-0.86, 0.86]) {
+    const r = new THREE.TorusGeometry(0.55, 0.06, 6, 18);
+    dark.push(place(r, x, 0.6, z));
+    for (let k = 0; k < 6; k++) dark.push(place(new THREE.BoxGeometry(0.04, 1.08, 0.04), x, 0.6, z, 0, 0, (k * Math.PI) / 6));
+    dark.push(place(new THREE.CylinderGeometry(0.1, 0.1, 0.18, 8), x, 0.6, z, 0, Math.PI / 2));
+  }
+  wood.push(place(new THREE.CylinderGeometry(0.05, 0.05, 1.9, 6), -0.95, 0.6, 0, 0, Math.PI / 2));
+  wood.push(place(new THREE.CylinderGeometry(0.05, 0.05, 1.9, 6), 0.95, 0.6, 0, 0, Math.PI / 2));
+  // kisten
+  for (const [x, z, h] of [[-1, -0.3, 0.42], [-0.45, 0.35, 0.36], [0.2, -0.3, 0.42]]) wood.push(place(boxGeo(0.55, h, 0.6, 1), x, 0.91 + h / 2, z, 0.1 * x));
+  // vaatjes
+  for (const [x, z] of [[0.85, 0.35], [1.2, -0.3]]) {
+    wood.push(place(new THREE.CylinderGeometry(0.22, 0.22, 0.5, 10), x, 1.16, z));
+    for (const y of [0.98, 1.34]) dark.push(place(new THREE.CylinderGeometry(0.235, 0.235, 0.04, 10), x, y, z));
+  }
+  // bundels pijlen rechtop in een kist
+  for (let b = 0; b < 3; b++) {
+    const bx = -0.45 + b * 0.24;
+    for (let k = 0; k < 9; k++) {
+      const a = k * 2.4;
+      const rr = 0.04 + (k % 3) * 0.025;
+      const x = bx + Math.cos(a) * rr;
+      const z = -0.3 + Math.sin(a) * rr;
+      wood.push(place(new THREE.CylinderGeometry(0.008, 0.008, 0.8, 3), x, 1.6, z, 0, 0.05 * Math.cos(a), 0.05 * Math.sin(a)));
+      fl.push(place(new THREE.BoxGeometry(0.05, 0.1, 0.005), x, 1.95, z, a));
+    }
+  }
+  // opgerold zeil
+  cloth.push(place(new THREE.CylinderGeometry(0.16, 0.16, 1.4, 10), -1.15, 1.16, 0.25, 0, Math.PI / 2));
+  const g = new THREE.Group();
+  for (const [list, mat] of [[wood, M.wood], [dark, M.darkWood], [cloth, _clothMat], [fl, _fletchMat]]) {
+    if (!list.length) continue;
+    const mesh = new THREE.Mesh(merge(list), mat);
+    mesh.castShadow = shadows;
+    g.add(mesh);
+  }
+  g.position.set(s.x, 0, s.z);
+  g.rotation.y = s.yaw;
+  g.name = 'supply';
+  return g;
+}
+
 function merge(list) {
   if (!list.length) return null;
   // gemengde lijsten (met en zonder index) eerst gelijktrekken
@@ -598,6 +655,8 @@ class FortView {
         wood.push(g);
       }
     }
+    // munitiewagens
+    for (const sp of f.supply || []) this.group.add(supplyWagon(M, sp, this.w.shadows));
     // gracht (Byzantijns)
     if (f.byz) {
       const water = [];

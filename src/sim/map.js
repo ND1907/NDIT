@@ -214,6 +214,10 @@ export function generateMap(teams, { seed = 1453, structHp = 1 } = {}) {
     // plek voor eigen belegeringsgeschut (net buiten de poort)
     const [sx2, sz2] = W(10, outerFront - 2);
     fort.siegeYard = { x: sx2, z: sz2 };
+    // munitiewagens: één binnen de muren, één bij het verzamelpunt voor de aanvallers
+    const [ax, az] = W(-16, F.W - 9);
+    const [bx2, bz2] = W(-11, outerFront - 1);
+    fort.supply = [{ x: ax, z: az, yaw: rot + Math.PI / 2 }, { x: bx2, z: bz2, yaw: rot + Math.PI / 2, field: true }];
     forts.push(fort);
     roads.push({ x0: rx, z0: rz, x1: 0, z1: 0, w: 6 });
   });

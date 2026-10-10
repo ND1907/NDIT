@@ -8,12 +8,17 @@ haakbussen, Grieks vuur, stormrammen, belegeringstorens en de bombarde van Urban
 
 | Rijk | Leider | Speelstijl | Bijzondere troepen |
 | --- | --- | --- | --- |
-| Ottomaanse Rijk | Sultan **Mehmed II** | grote legers, zware artillerie | azaps, janitsaren (börk), tüfekçi, sipahi's, bombarde van Urban |
+| Ottomaanse Rijk | Sultan **Mehmed II** | **sterkste leger**: gedrild, hoog moreel, twee reuzenbombardes | azaps, janitsaren (börk), tüfekçi, sipahi's, bombardes van Urban |
 | Byzantijnse Rijk | Keizer **Constantijn XI** | verdediger, dubbele Theodosiaanse muur met gracht | skoutatoi, toxotai, Grieks vuur, kataphrakten |
 | Republiek Genua | **Giovanni Giustiniani Longo** | elite-kruisboogschutters met pavese | balestrieri, lancieri, armigeri |
 | Republiek Venetië | Bailo **Girolamo Minotto** | gemengd, schutters en mariniers | balestrieri, schioppettieri, marinai, cavalieri |
 | Servisch Despotaat | Despoot **Đurađ Branković** | veel goedkope troepen, mijnwerkers | pešaci, strelci, kopijruiters, rudari (mineurs) |
 | Koninkrijk Hongarije | **János Hunyadi** | pieken, vroege vuurwapens, zware ridders | piekeniers, kruisboogschutters, puskások, huszárok, ridders |
+
+Het Ottomaanse leger was in 1453 het best georganiseerde leger van Europa en won het beleg. In het spel
+heeft het daarom (bij hetzelfde aantal soldaten) de beste troepen: meer levenspunten, iets meer slagkracht,
+een hoger en stabieler moreel (verliezen en een gevallen leider schokken minder), gepantserde janitsaren en twee
+bombardes van Urban in plaats van één.
 
 Historische noot: Branković en Hunyadi waren in 1453 zelf niet bij het beleg. De Servische hulptroepen
 vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander op de Balkan.
@@ -31,7 +36,17 @@ vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander o
   neem je het lichaam van die levende bot over. Het leger groeit daar niet van.
 - **Muren:** via een ladder kom je op de weergang en loop je vrij over de muur (kantelen en torens houden je
   tegen, een bres is een gat). Bij een ladder daal je af. Bots gebruiken ladders, weergangen en belegeringstorens ook.
-- **Paarden:** stijg af en op (E); een paard zonder ruiter blijft staan. Springen kan te voet en te paard.
+- **Bevelen:** geef je eigen leger bevelen met **T** (menu) of direct: **Z** volg mij · **X** positie houden ·
+  **C** verdedig het fort · **V** val aan · **B** de commandant beslist weer. Op de telefoon via 📣.
+  Linksboven zie je het huidige bevel en hoeveel man het opvolgen.
+- **Munitie:** pijlen, bouten, kogels en Grieks vuur raken op. Bij een **📦 munitiewagen** (één in elk fort,
+  één bij het verzamelpunt; geel op de kaart) vul je snel aan. Binnen je eigen fort en op de muur gaat het
+  langzaam vanzelf. Bij gesneuvelden raap je met **E** pijlen of kogels op. Bots doen dit zelf.
+- **Belegeringstuig duwen:** loop tegen je eigen bombarde, ram of belegeringstoren aan en duw hem in jouw
+  richting. Bots duwen mee; hoe meer duwers, hoe sneller het tuig rijdt.
+- **Paarden:** stijg af en op (E); een paard zonder ruiter blijft staan en graast. Springen kan te voet en te paard.
+  Paarden lopen in echte gangen (stap, draf, galop) en hebben echte vachtkleuren (bruin, vos, zwart, schimmel,
+  valk) met donkere benen, sokken en bles.
 - **Fases:** 1 *Opmars & belegering* → 2 *Bres* (de eerste muur, toren of poort valt) → 3 *Strijd om de donjon*.
   Na 75% van de tijd begint de *finale* en is een donjon makkelijker in te nemen.
 - **Winnen:** neem de **donjon** van elke vijand in (meer aanvallers dan verdedigers in de binnenplaats;
@@ -68,7 +83,8 @@ vochten aan Ottomaanse zijde; Hongarije was de grote christelijke tegenstander o
 | Muis richten (klik eerst in het spel) | rechterkant slepen |
 | Linkermuisknop aanvallen / schieten | **AANVAL** ingedrukt houden |
 | Q, muiswiel, 1 / 2: wapen wisselen | ⇄ |
-| E: ladder op/af · paard bestijgen/afstijgen | ⇅ |
+| E: ladder op/af · paard bestijgen/afstijgen · munitie oprapen | ⇅ |
+| T: bevelen (Z volg · X houd · C verdedig · V val aan · B commandant) | 📣 |
 | Spatie: springen | ⤒ |
 | R: strijdkreet (als leider) | 📯 |
 | Esc / P: pauze | ❚❚ |
@@ -93,6 +109,7 @@ node scripts/build-human.mjs                   # basislichaam opnieuw bouwen uit
 node scripts/build-horse.mjs                   # paardenlichaam opnieuw bouwen
 node scripts/sweep.mjs --set pairs --seeds 2   # alle 15 tweetallen, parallel, zonder scherm
 node scripts/sweep.mjs --set multi --seeds 2   # 3–6 teams, allianties en ieder voor zich
+node scripts/sweep.mjs --set ott --seeds 3     # de Ottomanen tegen elk rijk en in het historische beleg
 ```
 
 ### Android
@@ -124,11 +141,14 @@ Na elke codewijziging: `npm run cap:sync`.
 - **Soldaten:** echte menselijke lichamen uit de MakeHuman-basismesh (CC0), herposeerd en geskind met 4 botten
   per vertex op de GPU, in 3 detailniveaus. Kleding, harnas, gezicht en haar worden per eenheidstype in de UV-ruimte
   geschilderd (met normal map en verdikking van de geometrie). Zie `CREDITS.md` en `scripts/build-human.mjs`.
-- **Paarden:** organisch SDF-model (`scripts/build-horse.mjs`). Forten, vlaggen en wapens worden in code opgebouwd.
+- **Paarden:** anatomisch SDF-model (`scripts/build-horse.mjs`) met 17 botten (drie gewrichten per been: schouder/heup,
+  knie/sprong, kogel), gangen met steun- en zwaaifase per been, en zadelkleed, riemen, harnas en manen als rasters die
+  over het lijf zijn gedrapeerd. De vacht (kleur, donkere benen, sokken, bles) wordt per paard in de shader gekozen.
+  Forten, vlaggen en wapens worden in code opgebouwd.
 - **Simulatie los van rendering:** `src/sim` is pure JavaScript zonder scherm en volledig deterministisch (seed).
   Daardoor kunnen tests en balanssimulaties honderden complete veldslagen in Node draaien.
 - **GPU-crowd-renderer:** één instanced draw call per soldaattype en LOD-niveau. De skeletten (20 botten
-  voor mensen, 12 voor paarden) staan in een datatextuur, zodat honderden soldaten soepel bewegen.
+  voor mensen, 17 voor paarden) staan in een datatextuur, zodat honderden soldaten soepel bewegen.
 - **Navigatie:** flow fields per doel en alliantie (in tijdsplakken berekend), obstakelraster met DDA-raycasts.
 - **Capacitor 8** verpakt dezelfde code als native app voor iOS (`ios/`) en Android (`android/`).
 - Geluid en muziek (mehter of Byzantijns koraal) worden live gesynthetiseerd met de Web Audio API.

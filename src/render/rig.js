@@ -1,5 +1,6 @@
 // Skeletten en procedurele animaties voor mensen, paarden en belegeringstuig.
 import { HUMAN_JOINTS } from './assets/human-rig.js';
+import { HORSE_HEADER } from './assets/horse-data.js';
 // Per bot wordt een 3x4-matrix (12 floats) berekend; de crowd-renderer stuurt die
 // naar de GPU, waar elk model per bot wordt vervormd.
 
@@ -140,21 +141,16 @@ export const HUMAN_NB = HUMAN_SKEL.length;
 // ---------------------------------------------------------------------------
 // Paard
 // ---------------------------------------------------------------------------
-export const PB = { BODY: 0, NECK: 1, HEAD: 2, FL_U: 3, FL_L: 4, FR_U: 5, FR_L: 6, HL_U: 7, HL_L: 8, HR_U: 9, HR_L: 10, TAIL: 11 };
-export const HORSE_SKEL = [
-  [-1, 0, 1.28, 0],
-  [0, 0, 0.22, 0.72],
-  [1, 0, 0.62, 0.28],
-  [0, 0.19, -0.12, 0.62],
-  [3, 0, -0.5, 0],
-  [0, -0.19, -0.12, 0.62],
-  [5, 0, -0.5, 0],
-  [0, 0.19, -0.08, -0.66],
-  [7, 0, -0.5, 0],
-  [0, -0.19, -0.08, -0.66],
-  [9, 0, -0.5, 0],
-  [0, 0, 0.18, -0.86],
-];
+export const PB = {
+  BODY: 0, NECK: 1, HEAD: 2, FL_U: 3, FL_L: 4, FR_U: 5, FR_L: 6, HL_U: 7, HL_L: 8, HR_U: 9, HR_L: 10, TAIL: 11,
+  FL_P: 12, FR_P: 13, HL_P: 14, HR_P: 15, TAIL2: 16,
+};
+// [ouder, offset t.o.v. ouder] uit de rustposities van het gebouwde paardenmodel
+export const HORSE_SKEL = HORSE_HEADER.parents.map((p, i) => {
+  const b = HORSE_HEADER.bind[i];
+  const q = p < 0 ? [0, 0, 0] : HORSE_HEADER.bind[p];
+  return [p, b[0] - q[0], b[1] - q[1], b[2] - q[2]];
+});
 export const HORSE_NB = HORSE_SKEL.length;
 
 // Belegeringstuig: 0 = romp, 1 = bewegend deel (loop/arm/stormbalk/valbrug), 2 = wielen/slinger, 3 = vaantje
@@ -706,7 +702,14 @@ export function poseHuman(pose, u, info, t, mountedYawOffset = 0) {
   }
 
   // ---- bovenlichaam ----
-  upperBody(pose, u, w, info);
+  if (u.pushT > 0 && !u.mounted && u.alive) {
+    // belegeringstuig duwen: voorover leunen, beide handen tegen het hout
+    setR(pose, HB.SPINE, 0.42, 0, 0);
+    setR(pose, HB.HEAD, -0.3, 0, 0);
+    ikArm(pose, -1, [-0.24, 0.32, 0.5], POLE_R);
+    ikArm(pose, 1, [0.24, 0.32, 0.5], POLE_L);
+    hold(pose, u.wi === 1 ? HB.WPN_B : HB.WPN_A, [-0.24, 0.32, 0.5], [0, 1, 0.2]);
+  } else upperBody(pose, u, w, info);
   // getroffen: kort terugdeinzen
   if (u.hitT < 0.3) {
     const h = Math.sin((u.hitT / 0.3) * Math.PI);
@@ -719,52 +722,156 @@ export function poseHuman(pose, u, info, t, mountedYawOffset = 0) {
 }
 
 // ---------------------------------------------------------------------------
-// Paardengangen: stap, draf, galop
+// Paardengangen: stap (4 tellen), draf (2 tellen, diagonaal), galop (4 tellen met zweefmoment)
+// Elk been heeft een fase in de pas: steunfase (hoef op de grond, been zwaait van voor naar
+// achter, kogel zakt door) en zwaaifase (knie/sprong en kogel buigen, hoef wordt opgetild).
+// De romp zakt en kantelt met de steunende benen mee, zodat de hoeven op de grond blijven.
 // ---------------------------------------------------------------------------
+const H_BODY_Y = HORSE_HEADER.bind[0][1];
+// volgorde: LV, RV, LA, RA — [fase-offset, ...] per gang
+const GAITS = {
+  walk: { off: [0.25, 0.75, 0.0, 0.5], duty: 0.62, amp: 0.3, flex: 0.75, fet: 0.9 },
+  trot: { off: [0.0, 0.5, 0.5, 0.0], duty: 0.44, amp: 0.4, flex: 1.15, fet: 1.2 },
+  canter: { off: [0.62, 0.32, 0.0, 0.32], duty: 0.4, amp: 0.5, flex: 1.25, fet: 1.25 },
+  gallop: { off: [0.42, 0.54, 0.0, 0.12], duty: 0.33, amp: 0.6, flex: 1.4, fet: 1.35 },
+};
+const LEGS = [[PB.FL_U, PB.FL_L, PB.FL_P, 1], [PB.FR_U, PB.FR_L, PB.FR_P, 1], [PB.HL_U, PB.HL_L, PB.HL_P, -1], [PB.HR_U, PB.HR_L, PB.HR_P, -1]];
+const LEG_LEN = [1.0, 1.0, 1.13, 1.13]; // draaipunt tot grond (voor de rompdaling)
+const _leg = [new Float32Array(4), new Float32Array(4), new Float32Array(4), new Float32Array(4)];
+
+// hoeken van één been voor fase ph (0..1); out = [boven, midden, onder, steun(0/1)]
+function legAngles(G, ph, front, out) {
+  const p = ph - Math.floor(ph);
+  const A = G.amp * (front ? 1 : 0.85);
+  if (p < G.duty) {
+    // steunfase: van voren (−A) naar achteren (+A)
+    const k = p / G.duty;
+    out[0] = -A + 2 * A * k;
+    out[1] = front ? 0 : -0.06 * Math.sin(k * Math.PI); // sprong vangt iets op
+    out[2] = -0.32 * Math.sin(k * Math.PI) * G.fet; // kogel zakt door
+    out[3] = 1;
+  } else {
+    // zwaaifase: snel naar voren met gebogen knie/sprong en opgerolde kogel
+    const k = (p - G.duty) / (1 - G.duty);
+    const e = 0.5 - 0.5 * Math.cos(k * Math.PI);
+    out[0] = A - 2 * A * e - Math.sin(k * Math.PI) * (front ? 0.22 : 0.12) * G.flex;
+    const f = Math.sin(Math.min(1, k * 1.25) * Math.PI);
+    out[1] = front ? f * 1.25 * G.flex : -f * 0.85 * G.flex;
+    out[2] = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 0.9 * G.fet;
+    out[3] = 0;
+  }
+}
+
+function gaitBlend(sp) {
+  // [gang A, gang B, mengfactor]
+  if (sp < 2.3) return ['walk', 'walk', 0];
+  if (sp < 3.0) return ['walk', 'trot', (sp - 2.3) / 0.7];
+  if (sp < 6.3) return ['trot', 'trot', 0];
+  if (sp < 7.2) return ['trot', 'canter', (sp - 6.3) / 0.9];
+  if (sp < 9.5) return ['canter', 'canter', 0];
+  if (sp < 10.5) return ['canter', 'gallop', (sp - 9.5)];
+  return ['gallop', 'gallop', 0];
+}
+
 export function poseHorse(pose, u, t) {
   resetPose(pose, HORSE_SKEL);
   const sp = u.speed || 0;
+  const v = u.variant || 0;
   if (!u.alive) {
+    // door de voorbenen zakken en op de zij vallen, benen gestrekt
     const k = smooth(clamp01(u.deadT / 0.9));
-    setR(pose, PB.FL_U, -0.9 * k, 0, 0);
-    setR(pose, PB.FR_U, -0.6 * k, 0, 0);
-    setR(pose, PB.HL_U, 0.7 * k, 0, 0);
-    setR(pose, PB.HR_U, 0.9 * k, 0, 0);
-    setR(pose, PB.NECK, 0.5 * k, 0, 0);
+    setR(pose, PB.FL_U, -0.7 * k, 0, 0);
+    setR(pose, PB.FL_L, 0.5 * k, 0, 0);
+    setR(pose, PB.FR_U, -0.45 * k, 0, 0);
+    setR(pose, PB.FR_L, 0.9 * k, 0, 0);
+    setR(pose, PB.HL_U, 0.5 * k, 0, 0);
+    setR(pose, PB.HR_U, 0.75 * k, 0, 0);
+    setR(pose, PB.HR_L, -0.4 * k, 0, 0);
+    setR(pose, PB.NECK, 0.45 * k, 0.3 * k, 0);
+    setR(pose, PB.HEAD, 0.3 * k, 0, 0);
+    setR(pose, PB.TAIL, 0.3, 0, 0);
     return { tilt: k * 1.45, drop: k * 0.55 };
   }
-  const g = u.gait;
-  let amp;
-  let phases;
-  if (sp < 2.5) {
-    amp = Math.min(1, sp / 1.5) * 0.32;
-    phases = [0, Math.PI, Math.PI * 0.5, Math.PI * 1.5]; // stap: vier tellen
-  } else if (sp < 7) {
-    amp = 0.45;
-    phases = [0, Math.PI, Math.PI, 0]; // draf: diagonaal
-  } else {
-    amp = 0.7;
-    phases = [0, 0.35, Math.PI * 0.85, Math.PI * 1.15]; // galop
-  }
-  const legs = [[PB.FL_U, PB.FL_L, 1], [PB.FR_U, PB.FR_L, 1], [PB.HL_U, PB.HL_L, -1], [PB.HR_U, PB.HR_L, -1]];
+  const walking = sp > 0.25;
+  const cyc = (u.gait || 0) / (Math.PI * 2);
+  const [ga, gb, wb] = gaitBlend(sp);
+  const GA = GAITS[ga];
+  const GB = GAITS[gb];
+  const amt = walking ? Math.min(1, sp / 1.2) : 0;
+  let frontDrop = 0;
+  let hindDrop = 0;
+  let nf = 0;
+  let nh = 0;
+  const tmpB = _tmpLeg;
   for (let i = 0; i < 4; i++) {
-    const [u1, l1, front] = legs[i];
-    const ph = g + phases[i];
-    const s = Math.sin(ph);
-    const lift = Math.max(0, Math.cos(ph));
-    setR(pose, u1, -s * amp, 0, 0);
-    // knie (voor) buigt naar achteren, sprong (achter) naar voren
-    setR(pose, l1, front > 0 ? lift * amp * 1.4 : -lift * amp * 1.1, 0, 0);
+    const front = i < 2;
+    const o = _leg[i];
+    legAngles(GA, cyc + GA.off[i], front, o);
+    if (wb > 0) {
+      legAngles(GB, cyc + GB.off[i], front, tmpB);
+      for (let k = 0; k < 4; k++) o[k] += (tmpB[k] - o[k]) * wb;
+    }
+    for (let k = 0; k < 3; k++) o[k] *= amt;
+    // romp zakt als het steunbeen schuin staat
+    if (o[3] > 0.5) {
+      const d = LEG_LEN[i] * (1 - Math.cos(o[0]));
+      if (front) { frontDrop += d; nf++; } else { hindDrop += d; nh++; }
+    }
   }
-  const gallop = sp >= 7;
-  const bob = gallop ? Math.sin(g) * 0.07 : Math.abs(Math.sin(g)) * 0.03 * Math.min(1, sp);
-  pose.off[PB.BODY * 3 + 1] = 1.28 + bob;
-  setR(pose, PB.BODY, gallop ? Math.cos(g) * 0.06 : 0, 0, 0);
-  setR(pose, PB.NECK, gallop ? -0.2 + Math.cos(g) * 0.12 : sp > 0.3 ? -0.05 : 0.15 + Math.sin(t * 0.7 + u.variant) * 0.08, 0, 0);
-  setR(pose, PB.HEAD, sp > 0.3 ? 0.1 : 0.25, Math.sin(t * 0.4 + u.variant) * (sp < 0.3 ? 0.2 : 0.03), 0);
-  setR(pose, PB.TAIL, 0.5 + Math.min(0.6, sp * 0.06) + Math.sin(t * 3 + u.variant) * 0.1, Math.sin(t * 1.7) * 0.15, 0);
-  return { tilt: 0, drop: 0, bob };
+  frontDrop = nf ? frontDrop / nf : 0.03 * amt;
+  hindDrop = nh ? hindDrop / nh : 0.03 * amt;
+  const gallop = sp > 6.3;
+  // zweefmoment in de galop: romp licht omhoog als er weinig benen steunen
+  const lift = gallop && nf + nh <= 1 ? 0.05 : 0;
+  const drop = (frontDrop + hindDrop) / 2 - lift;
+  const pitch = Math.atan2(frontDrop - hindDrop, 1.25);
+  // stilstaand: rustig ademen en gewicht verplaatsen
+  const breathe = Math.sin(t * 1.6 + v) * 0.006;
+  pose.off[PB.BODY * 3 + 1] = H_BODY_Y - drop + (walking ? 0 : breathe);
+  setR(pose, PB.BODY, pitch, 0, walking ? 0 : Math.sin(t * 0.3 + v) * 0.012);
+  for (let i = 0; i < 4; i++) {
+    const [b0, b1, b2] = LEGS[i];
+    const o = _leg[i];
+    let a0 = o[0];
+    let a1 = o[1];
+    let a2 = o[2];
+    if (!walking) {
+      // rustend achterbeen (een van beide) licht gebogen op de toon
+      const rest = Math.sin(t * 0.13 + v * 1.7) > 0.3 ? (v & 1 ? 3 : 2) : -1;
+      if (i === rest) {
+        a0 = -0.04;
+        a1 = -0.28;
+        a2 = 0.5;
+      }
+    }
+    // de romp kantelt: benen corrigeren zodat ze naar de grond blijven wijzen
+    setR(pose, b0, a0 - pitch, 0, 0);
+    setR(pose, b1, a1, 0, 0);
+    setR(pose, b2, a2, 0, 0);
+  }
+  // hals en hoofd: knikken mee met de pas (stap: per voorbeen, galop: met de sprong)
+  let neck;
+  let head;
+  if (!walking) {
+    // grazen of rondkijken
+    const graze = Math.max(0, Math.sin(t * 0.07 + v * 2.1) - 0.55) / 0.45;
+    neck = 0.12 + Math.sin(t * 0.5 + v) * 0.03 + smooth(Math.min(1, graze * 1.5)) * 1.0;
+    head = 0.18 + graze * 0.3;
+    setR(pose, PB.HEAD, head, Math.sin(t * 0.37 + v) * 0.25 * (1 - graze), Math.sin(t * 0.21 + v) * 0.05);
+  } else {
+    const nod = gallop ? Math.cos((cyc + 0.15) * Math.PI * 2) * 0.12 : Math.sin(cyc * Math.PI * 4) * (sp < 2.3 ? 0.07 : 0.03);
+    neck = (gallop ? 0.1 : 0.0) + nod - pitch * 0.5;
+    head = (gallop ? 0.12 : 0.18) - nod * 0.4;
+    setR(pose, PB.HEAD, head, 0, 0);
+  }
+  setR(pose, PB.NECK, neck, 0, 0);
+  // staart: in beweging opgetild en wapperend, stilstaand af en toe zwiepen (vliegen)
+  const swish = walking ? Math.sin(t * 5 + v) * 0.12 : Math.max(0, Math.sin(t * 0.9 + v * 3)) ** 6 * Math.sin(t * 9) * 0.6;
+  setR(pose, PB.TAIL, 0.15 + Math.min(0.35, sp * 0.035), swish, 0);
+  setR(pose, PB.TAIL2, Math.min(0.3, sp * 0.028) + Math.sin(t * 6 + v) * 0.06 * Math.min(1, sp), swish * 0.8, 0);
+  return { tilt: 0, drop: 0, bob: -drop };
 }
+const _tmpLeg = new Float32Array(4);
 
 // ---------------------------------------------------------------------------
 // Belegeringstuig

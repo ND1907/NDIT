@@ -8,7 +8,7 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padSt
 export class Hud {
   constructor() {
     this.el = {};
-    for (const id of ['phase-name', 'clock', 'teams', 'feed', 'leaderbars', 'hitmarker', 'dmg-dir', 'announce', 'announce-title', 'announce-sub', 'prompt', 'unit-name', 'hp-fill', 'hp-text', 'morale-fill', 'weapon-name', 'ammo', 'reload-fill', 'ability', 'ability-name', 'ability-cd', 'fps', 'death', 'death-text', 'death-timer', 'btn-climb', 'btn-cry', 'vignette']) this.el[id] = $(id);
+    for (const id of ['phase-name', 'clock', 'teams', 'feed', 'leaderbars', 'hitmarker', 'dmg-dir', 'announce', 'announce-title', 'announce-sub', 'prompt', 'unit-name', 'hp-fill', 'hp-text', 'morale-fill', 'weapon-name', 'ammo', 'reload-fill', 'ability', 'ability-name', 'ability-cd', 'fps', 'death', 'death-text', 'death-timer', 'btn-climb', 'btn-cry', 'vignette', 'orders', 'order-ind']) this.el[id] = $(id);
     this.mm = $('minimap');
     this.mctx = this.mm.getContext('2d');
     this.prev = {};
@@ -106,7 +106,11 @@ export class Hud {
         document.body.dataset.w = melee ? 'melee' : 'ranged';
       });
       const ammo = p.ammo[p.wi];
-      this.set('a', melee ? '' : String(ammo), () => (this.el.ammo.textContent = melee ? `bereik ${w.reach} m` : ammo === Infinity ? '' : `${ammo} over`));
+      const an = Math.floor(ammo);
+      this.set('a', melee ? '' : String(an), () => {
+        this.el.ammo.textContent = melee ? `bereik ${w.reach} m` : ammo === Infinity ? '' : an < 1 ? 'op! haal munitie' : `${an} over`;
+        this.el.ammo.classList.toggle('low', !melee && ammo !== Infinity && an <= 5);
+      });
       const cd = Math.max(0, p.cd) / w.cooldown;
       this.el['reload-fill'].style.width = Math.round((1 - cd) * 100) + '%';
     }
@@ -130,10 +134,32 @@ export class Hud {
     else if (p.wall) prompt = match.nearestLadder(p) ? (match.controlsTouch ? '⇅ = ladder af' : 'E = ladder af') : 'Op de weergang · loop naar een ladder om af te dalen';
     else if (p.post) prompt = match.controlsTouch ? '⇅ = muur af' : 'E = muur af';
     else if (nearPost) prompt = match.controlsTouch ? '⇅ = ladder op' : 'E = de muur op';
+    else if (p.alive && !p.mounted && (this._ammoT = (this._ammoT || 0) - dt) <= 0) {
+      // munitie: om de 0,25 s opnieuw bepalen
+      this._ammoT = 0.25;
+      const src = match.ammoSource(p);
+      this._ammoPrompt = src === 'wagon' ? '📦 Munitie wordt aangevuld…' : src === 'body' ? (match.controlsTouch ? '⇅ = pijlen/kogels oprapen' : 'E = pijlen/kogels oprapen') : src === 'fort' && match.needsAmmo(p, 0.5) ? 'Voorraad in het fort: munitie vult langzaam aan' : '';
+    }
+    if (!prompt && p.alive && !p.mounted) prompt = this._ammoPrompt || '';
+    if (!prompt && p.alive && match.needsAmmo(p, 0.25) && !p.mounted) prompt = 'Weinig munitie · ga naar een munitiewagen 📦 (zie kaart)';
     this.set('prompt', prompt, (v) => {
       this.el.prompt.textContent = v;
-      this.el['btn-climb'].classList.toggle('hidden', !v || v.startsWith('Op de weergang'));
+      this.el['btn-climb'].classList.toggle('hidden', !v || !v.includes('='));
     });
+    // huidig bevel aan het leger
+    const po = t.playerOrder;
+    const ORD = { follow: '🚩 Volg mij', hold: '✋ Positie houden', defend: '🏰 Verdedig het fort', attack: '⚔ Val aan' };
+    if ((this._ordT = (this._ordT || 0) - dt) <= 0) {
+      this._ordT = 0.5;
+      let n = 0;
+      if (po) for (const sq of match.squads) if (sq.team === t.id && sq.order.kind === (po.kind === 'attack' ? 'attack' : po.kind)) n += sq.members.length;
+      const txt = po ? `${ORD[po.kind]} · ${n} man` : `🧭 Commandant beslist${match.controlsTouch ? '' : ' · T = bevelen'}`;
+      this.set('ord', txt, (v) => {
+        this.el['order-ind'].textContent = v;
+        this.el['order-ind'].classList.toggle('active', !!po);
+      });
+      for (const b of this.el.orders.querySelectorAll('[data-order]')) b.classList.toggle('on', (po?.kind || 'free') === b.dataset.order);
+    }
     // schade-indicatie
     this.hurtT = Math.max(0, this.hurtT - dt);
     this.el.vignette.style.opacity = Math.min(1, this.hurtT * 2 + (p.alive && p.hp < p.maxHp * 0.3 ? 0.35 : 0));
@@ -228,6 +254,18 @@ export class Hud {
       g.arc(tx(t.fort.keep.x), tx(t.fort.keep.z), 5, 0, Math.PI * 2);
       g.fill();
     }
+    // munitiewagens van de eigen alliantie
+    const myA = m.player?.alliance;
+    for (const t of m.teams) {
+      if (t.alliance !== myA) continue;
+      for (const s of t.fort.supply || []) {
+        g.fillStyle = '#f2c94c';
+        g.strokeStyle = '#3a2a10';
+        g.lineWidth = 1;
+        g.fillRect(tx(s.x) - 3, tx(s.z) - 2.5, 6, 5);
+        g.strokeRect(tx(s.x) - 3, tx(s.z) - 2.5, 6, 5);
+      }
+    }
     for (const c of m.map.capturePoints) {
       g.strokeStyle = c.owner ? FACTIONS[c.owner].ui : '#ddd';
       g.lineWidth = 2;
@@ -296,6 +334,11 @@ export class Hud {
     h.classList.remove('show');
     void h.offsetWidth;
     h.classList.add('show');
+  }
+
+  toggleOrders(open = !this.ordersOpen) {
+    this.ordersOpen = open;
+    this.el.orders.classList.toggle('hidden', !open);
   }
 
   hurt(by) {
@@ -385,6 +428,16 @@ export class Hud {
           break;
         case 'cry':
           this.feed(`${uname(e.u)}: “${e.name}”`, 'big');
+          break;
+        case 'order':
+          if (e.team === p?.team) {
+            const L = { follow: ['Volg mij!', 'Het leger sluit bij je aan'], hold: ['Positie houden!', 'Iedereen blijft staan waar hij is'], defend: ['Verdedig het fort!', 'Terug naar de muren en de donjon'], attack: ['Ten aanval!', 'Het hele leger trekt op naar de vijand'], free: ['De commandant neemt het over', 'Je leger volgt weer zijn eigen plan'] }[e.kind];
+            this.announce(L[0], L[1], false, 2);
+            sfx.horn?.();
+          }
+          break;
+        case 'ammo':
+          if (e.u.isPlayer && e.how === 'loot') this.feed(`+${e.n} munitie opgeraapt`, 'me');
           break;
         case 'dock':
           this.feed(`Belegeringstoren aangelegd tegen de muur van ${name(e.st.team)}`, e.st.team === p?.team ? 'big' : '');

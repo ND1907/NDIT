@@ -30,6 +30,11 @@ if (process.argv[2] === '--child') {
     add(['venice', 'hungary'], 'ffa');
   } else if (set === 'pairs') {
     for (let i = 0; i < FACS.length; i++) for (let j = i + 1; j < FACS.length; j++) add([FACS[i], FACS[j]], 'ffa');
+  } else if (set === 'ott') {
+    // de Ottomanen tegen elk ander rijk afzonderlijk, en het historische beleg
+    for (const f of FACS.slice(1)) add(['ottoman', f], 'ffa');
+    add(['ottoman', 'byzantine', 'genoa'], 'historical');
+    add(['ottoman', 'serbia', 'byzantine', 'genoa'], 'historical');
   } else if (set === 'multi') {
     add(['ottoman', 'byzantine', 'genoa'], 'historical');
     add(['ottoman', 'serbia', 'byzantine', 'venice'], 'historical');

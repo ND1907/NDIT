@@ -10,7 +10,7 @@ export class Controls {
     this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     this.sensitivity = 1;
     this.keys = new Set();
-    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
+    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null, order: null };
     this.noLock = false;
     this.freeDrag = false; // na sneuvelen: muis vrij, slepen = rondkijken
 
@@ -112,6 +112,14 @@ export class Controls {
     tap('btn-climb', () => (this.actions.climb = true));
     tap('btn-jump', () => (this.actions.jump = true));
     tap('btn-cry', () => (this.actions.cry = true));
+    tap('btn-orders', () => (this.actions.ordersMenu = true));
+    for (const b of document.querySelectorAll('#orders [data-order]')) {
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.actions.order = b.dataset.order;
+      });
+    }
   }
 
   _knob(dx, dy) {
@@ -127,6 +135,11 @@ export class Controls {
       if (e.code === 'Digit2') this.actions.select = 1;
       if (e.code === 'KeyE' || e.code === 'KeyF') this.actions.climb = true;
       if (e.code === 'KeyR' || e.code === 'KeyG') this.actions.cry = true;
+      // bevelen aan je troepen
+      const ord = { KeyZ: 'follow', KeyX: 'hold', KeyC: 'defend', KeyV: 'attack', KeyB: 'free' }[e.code];
+      if (ord) this.actions.order = ord;
+      if (e.code === 'KeyT') this.actions.ordersMenu = true;
+      if (this.ordersOpen && /^Digit[3-7]$/.test(e.code)) this.actions.order = ['follow', 'hold', 'defend', 'attack', 'free'][+e.code.slice(5) - 3];
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) this.actions.jump = true;
@@ -200,7 +213,7 @@ export class Controls {
     this.move.x = this.move.y = 0;
     this.look.x = this.look.y = 0;
     this.firing = false;
-    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null };
+    this.actions = { switch: false, climb: false, cry: false, jump: false, select: null, order: null };
     this.joyId = null;
     this.lookIds.clear();
     this.joyBase?.classList.remove('active');
